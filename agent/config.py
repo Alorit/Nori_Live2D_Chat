@@ -54,8 +54,6 @@ class Config:
 
         # 常用路径解析成绝对路径
         self.live2d_model_path = _resolve_path(root, self.live2d.get("model_path", ""))
-        self.tts_sherpa_model_dir = _resolve_path(root, self.tts.get("sherpa", {}).get("model_dir", ""))
-        self.tts_piper_model_dir = _resolve_path(root, self.tts.get("piper", {}).get("model_dir", ""))
         self.data_dir = root / "data"
         self.db_path = str(self.data_dir / "memory.db")
         self.log_file = _resolve_path(root, self.advanced.get("log_file", "data/agent.log"))

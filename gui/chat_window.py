@@ -29,6 +29,7 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPixmap,
+    QColor,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -62,6 +63,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.winstyle import apply_dark_title_bar
 from utils.console_logs import collect_logs
 from utils.stickers import (
     ensure_default_stickers,
@@ -349,6 +351,67 @@ QScrollBar::handle:vertical:hover {
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
 }
+QMenu {
+    background: #0c1530;
+    border: 1px solid rgba(103, 232, 249, 0.35);
+    border-radius: 10px;
+    color: #d7e3ff;
+    padding: 4px;
+}
+QMenu::item {
+    padding: 6px 20px;
+    border-radius: 6px;
+}
+QMenu::item:selected {
+    background: #123c54;
+    color: #eafff7;
+}
+QMenu::separator {
+    height: 1px;
+    background: rgba(103, 232, 249, 0.2);
+    margin: 4px 8px;
+}
+QListWidget#HistoryList {
+    background: rgba(9, 15, 32, 0.92);
+    border: 1px solid rgba(125, 211, 252, 0.28);
+    border-radius: 14px;
+    padding: 6px;
+}
+QListWidget#HistoryList::item {
+    border-radius: 10px;
+    margin: 2px 2px;
+    padding: 2px;
+}
+QListWidget#HistoryList::item:hover {
+    background: rgba(19, 34, 70, 0.85);
+}
+QListWidget#HistoryList::item:selected {
+    background: rgba(18, 60, 84, 0.9);
+    border: 1px solid rgba(103, 232, 249, 0.55);
+}
+QLabel#HistoryItemTitle {
+    color: #eafff7;
+    font-weight: 700;
+    font-size: 14px;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+QLabel#HistoryItemTitleActive {
+    color: #7dd3fc;
+    font-weight: 800;
+    font-size: 14px;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+QLabel#HistoryItemMeta {
+    color: #8fa6d8;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
 """
 
 
@@ -504,7 +567,6 @@ class ChatWindow(QWidget):
     feedback_requested = Signal(float)  # 1.0 赞 / -1.0 踩
     export_requested = Signal()
     tts_backend_requested = Signal(str)
-    edge_voice_requested = Signal(str)
     speed_requested = Signal(float)
     scale_requested = Signal(float)
     always_on_top_requested = Signal(bool)
@@ -526,6 +588,7 @@ class ChatWindow(QWidget):
     tts_voice_switch_requested = Signal(str)      # voice name
     tts_voice_import_requested = Signal(str)      # source folder/zip
     tts_voice_export_requested = Signal(str)      # voice name
+    voice_export_dir_requested = Signal(str)      # 语音包导出目录
     llm_model_rename_requested = Signal(str, str)  # old_name, new_name
     llm_model_delete_requested = Signal(str)       # model name
     memory_auto_review_requested = Signal(bool, int)  # enabled, minutes
@@ -566,14 +629,6 @@ class ChatWindow(QWidget):
     # 服务控制台
     service_action_requested = Signal(str)
 
-    EDGE_VOICES = [
-        "zh-CN-XiaoyiNeural",
-        "zh-CN-XiaoxiaoNeural",
-        "zh-CN-YunxiNeural",
-        "zh-CN-YunjianNeural",
-        "zh-CN-YunyangNeural",
-    ]
-
     def __init__(self, cfg, quit_on_close: bool = False, live2d_mode: bool = False):
         super().__init__()
         self.cfg = cfg
@@ -586,10 +641,11 @@ class ChatWindow(QWidget):
         self.resize(int(gui.get("chat_width", 760)), int(gui.get("chat_height", 820)))
         self._font_size = int(gui.get("font_size", 13) or 13)
         self._chat_font_size = int(gui.get("chat_font_size", 15) or 15)
-        self._user_name = str(gui.get("user_name", "Alorit") or "Alorit")
+        self._user_name = str(gui.get("user_name", "") or "主人")
         self._agent_name = str(gui.get("agent_name", "Nori") or "Nori")
         self._user_avatar = str(gui.get("user_avatar", "") or "")
         self._agent_avatar = str(gui.get("agent_avatar", "") or "")
+        self._voice_export_dir = str(gui.get("voice_export_dir", "") or "")
         self.setStyleSheet(self._style_for_font(self._font_size))
         self.setAcceptDrops(True)
 
@@ -597,12 +653,9 @@ class ChatWindow(QWidget):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(8)
 
-        # 头部
+        # 头部：不再放标题文字（由系统标题栏承担），右上角 × 即完全退出
         header = QHBoxLayout()
         header.setSpacing(8)
-        title = QLabel("🎀 Nori 控制台", self)
-        title.setObjectName("HeaderTitle")
-        header.addWidget(title)
         header.addStretch(1)
         self.status_label = QLabel("", self)
         self.status_label.setObjectName("StatusPill")
@@ -612,10 +665,6 @@ class ChatWindow(QWidget):
         self.tts_refresh_btn.setToolTip("重新检测 TTS 与后台服务状态")
         self.tts_refresh_btn.clicked.connect(lambda: self.tts_status_refresh_requested.emit())
         header.addWidget(self.tts_refresh_btn)
-        self.quit_btn = QPushButton("⏻ 完全退出", self)
-        self.quit_btn.setObjectName("DangerButton")
-        self.quit_btn.clicked.connect(self._on_quit_clicked)
-        header.addWidget(self.quit_btn)
         root.addLayout(header)
 
         # 顶级页签：聊天 / 设置（人格、记忆、控制台统一收纳在设置里）
@@ -761,7 +810,7 @@ class ChatWindow(QWidget):
             self.agent_avatar_label.setText(Path(path).name if path else "🐱（默认）")
 
     def set_user_name(self, name: str):
-        name = (name or "").strip() or "Alorit"
+        name = (name or "").strip() or "主人"
         self._user_name = name
         self.user_name_edit.blockSignals(True)
         self.user_name_edit.setText(name)
@@ -1848,7 +1897,7 @@ class ChatWindow(QWidget):
         self.tts_voice_switch_btn.clicked.connect(self._on_tts_voice_switch)
         grid.addWidget(self.tts_voice_switch_btn, 1, 2)
 
-        self.tts_voice_export_btn = QPushButton("📦 导出到 Download", page)
+        self.tts_voice_export_btn = QPushButton("📦 导出语音包", page)
         self.tts_voice_export_btn.clicked.connect(self._on_tts_voice_export)
         grid.addWidget(self.tts_voice_export_btn, 1, 3)
 
@@ -1856,7 +1905,37 @@ class ChatWindow(QWidget):
         self.tts_voice_status.setWordWrap(True)
         self.tts_voice_status.setStyleSheet("color:#8fa6d8; font-size:12px;")
         grid.addWidget(self.tts_voice_status, 2, 0, 1, 4)
+
+        # 语音包导出目录（可在设置里修改，保存到 settings_overrides.json）
+        grid.addWidget(QLabel("导出目录", page), 3, 0)
+        self.voice_export_dir_edit = QLineEdit(page)
+        self.voice_export_dir_edit.setText(self._voice_export_dir)
+        self.voice_export_dir_edit.setPlaceholderText(
+            f"留空则导出到 {Path.home() / 'Downloads'}")
+        self.voice_export_dir_edit.editingFinished.connect(
+            lambda: self.voice_export_dir_requested.emit(
+                self.voice_export_dir_edit.text().strip()))
+        grid.addWidget(self.voice_export_dir_edit, 3, 1, 1, 2)
+        self.voice_export_dir_btn = QPushButton("📁 浏览…", page)
+        self.voice_export_dir_btn.setToolTip("选择语音包导出目录")
+        self.voice_export_dir_btn.clicked.connect(self._on_select_voice_export_dir)
+        grid.addWidget(self.voice_export_dir_btn, 3, 3)
         return box
+
+    def set_voice_export_dir(self, path: str):
+        """由控制器在启动时同步当前导出目录到输入框。"""
+        self._voice_export_dir = str(path or "")
+        self.voice_export_dir_edit.blockSignals(True)
+        self.voice_export_dir_edit.setText(self._voice_export_dir)
+        self.voice_export_dir_edit.blockSignals(False)
+
+    def _on_select_voice_export_dir(self):
+        d = QFileDialog.getExistingDirectory(
+            self, "选择语音包导出目录",
+            self.voice_export_dir_edit.text() or str(self.cfg.root))
+        if d:
+            self.voice_export_dir_edit.setText(d)
+            self.voice_export_dir_requested.emit(d)
 
     def set_tts_voices(self, voices: list[dict], current: str = ""):
         self.tts_voice_combo.blockSignals(True)
@@ -1916,7 +1995,9 @@ class ChatWindow(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
+        # 第一行：人格选择 + 新建对话
         top = QHBoxLayout()
+        top.setSpacing(8)
         top.addWidget(QLabel("人格", self.history_page))
         self.history_persona_combo = QComboBox(self.history_page)
         self.history_persona_combo.currentIndexChanged.connect(
@@ -1927,25 +2008,43 @@ class ChatWindow(QWidget):
         self.history_new_btn.setObjectName("PrimaryButton")
         self.history_new_btn.clicked.connect(self._on_new_conversation)
         top.addWidget(self.history_new_btn)
-        self.history_open_btn = QPushButton("打开到聊天", self.history_page)
-        self.history_open_btn.clicked.connect(self._on_open_conversation)
-        top.addWidget(self.history_open_btn)
-        self.history_rename_btn = QPushButton("重命名", self.history_page)
-        self.history_rename_btn.clicked.connect(self._on_rename_conversation)
-        top.addWidget(self.history_rename_btn)
-        self.history_delete_btn = QPushButton("删除", self.history_page)
-        self.history_delete_btn.setObjectName("DangerButton")
-        self.history_delete_btn.clicked.connect(self._on_delete_conversation)
-        top.addWidget(self.history_delete_btn)
         layout.addLayout(top)
 
+        # 第二行：按名称筛选（本地过滤，不触发刷新）
+        self.history_search_edit = QLineEdit(self.history_page)
+        self.history_search_edit.setPlaceholderText("🔍 按名称筛选会话…")
+        self.history_search_edit.setClearButtonEnabled(True)
+        self.history_search_edit.textChanged.connect(lambda _t: self._render_history_list())
+        layout.addWidget(self.history_search_edit)
+
+        # 会话列表：双行卡片（标题 + 元信息），双击打开，右键菜单操作
         self.history_list = QListWidget(self.history_page)
-        self.history_list.doubleClicked.connect(self._on_open_conversation)
+        self.history_list.setObjectName("HistoryList")
+        self.history_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.history_list.customContextMenuRequested.connect(self._show_history_menu)
+        self.history_list.itemActivated.connect(lambda _item: self._on_open_conversation())
         layout.addWidget(self.history_list, 1)
 
+        # 底部：当前会话 + 操作按钮
+        bottom = QHBoxLayout()
+        bottom.setSpacing(8)
         self.current_conversation_label = QLabel("当前会话：未选择", self.history_page)
         self.current_conversation_label.setStyleSheet("color:#7dd3fc; font-size:12px;")
-        layout.addWidget(self.current_conversation_label)
+        bottom.addWidget(self.current_conversation_label, 1)
+        self.history_open_btn = QPushButton("📂 打开到聊天", self.history_page)
+        self.history_open_btn.clicked.connect(self._on_open_conversation)
+        bottom.addWidget(self.history_open_btn)
+        self.history_rename_btn = QPushButton("✏ 重命名", self.history_page)
+        self.history_rename_btn.clicked.connect(self._on_rename_conversation)
+        bottom.addWidget(self.history_rename_btn)
+        self.history_delete_btn = QPushButton("🗑 删除", self.history_page)
+        self.history_delete_btn.setObjectName("DangerButton")
+        self.history_delete_btn.clicked.connect(self._on_delete_conversation)
+        bottom.addWidget(self.history_delete_btn)
+        layout.addLayout(bottom)
+
+        self._conversation_rows: list[dict] = []
+        self._conversation_current_id: int | None = None
 
     def set_history_personas(self, names: list[str], active: str):
         self.history_persona_combo.blockSignals(True)
@@ -1960,19 +2059,103 @@ class ChatWindow(QWidget):
         self.history_persona_combo.blockSignals(False)
 
     def set_conversations(self, rows: list[dict], current_id: int | None = None):
+        """controller 推送会话列表；保存后统一交给 _render_history_list 渲染。"""
+        self._conversation_rows = list(rows or [])
+        self._conversation_current_id = current_id
+        self._render_history_list()
+
+    @staticmethod
+    def _relative_time(ts: float) -> str:
+        """把时间戳转成「刚刚 / N 分钟前 / …」；超过一周显示日期。"""
+        try:
+            delta = _datetime.now().timestamp() - float(ts)
+        except Exception:
+            return ""
+        if delta < 0:
+            return "刚刚"
+        if delta < 60:
+            return "刚刚"
+        if delta < 3600:
+            return f"{int(delta // 60)} 分钟前"
+        if delta < 86400:
+            return f"{int(delta // 3600)} 小时前"
+        if delta < 7 * 86400:
+            return f"{int(delta // 86400)} 天前"
+        return _datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d")
+
+    def _render_history_list(self):
+        """按搜索词过滤并渲染会话卡片（标题 + ★/条数/最近活跃）。"""
+        flt = ""
+        try:
+            flt = self.history_search_edit.text().strip().lower()
+        except AttributeError:
+            pass
+        rows = [r for r in self._conversation_rows
+                if not flt or flt in str(r.get("title", "")).lower()]
         self.history_list.clear()
-        for r in rows or []:
-            title = r.get("title", "")
-            main = bool(r.get("is_main"))
-            count = r.get("msg_count", 0)
-            mark = "★ 主对话" if main else "🗨 对话"
-            text = f"{mark} · {title}  ·  {count} 条"
-            item = QListWidgetItem(text)
+        if not rows:
+            tip = QListWidgetItem(
+                "（没有匹配的会话）" if flt
+                else "（该人格还没有会话，点上方「＋ 新对话」开始）")
+            tip.setFlags(Qt.NoItemFlags)
+            tip.setForeground(QColor("#52638c"))
+            self.history_list.addItem(tip)
+            return
+        for r in rows:
+            title = str(r.get("title", ""))
+            is_main = bool(r.get("is_main"))
+            count = r.get("msg_count", 0) or 0
+            last_ts = 0.0
+            for key in ("last_ts", "updated"):
+                try:
+                    last_ts = float(r.get(key) or 0)
+                    if last_ts > 0:
+                        break
+                except Exception:
+                    last_ts = 0.0
+            meta_bits = ["★ 主对话" if is_main else "🗨 普通对话",
+                         f"{count} 条消息"]
+            if last_ts > 0:
+                meta_bits.append(self._relative_time(last_ts))
+            current = r.get("id") == self._conversation_current_id
+
+            card = QWidget(self.history_list)
+            v = QVBoxLayout(card)
+            v.setContentsMargins(10, 7, 10, 7)
+            v.setSpacing(2)
+            t = QLabel(("▶ " if current else "") + title, card)
+            t.setObjectName("HistoryItemTitleActive" if current else "HistoryItemTitle")
+            m = QLabel(" · ".join(meta_bits), card)
+            m.setObjectName("HistoryItemMeta")
+            v.addWidget(t)
+            v.addWidget(m)
+
+            item = QListWidgetItem()
             item.setData(Qt.UserRole, r.get("id"))
-            if r.get("id") == current_id:
-                item.setForeground(Qt.cyan)
-                item.setText(f"▶ {text}")
+            item.setSizeHint(card.sizeHint())
             self.history_list.addItem(item)
+            self.history_list.setItemWidget(item, card)
+            if current:
+                self.history_list.setCurrentItem(item)
+
+    def _show_history_menu(self, pos):
+        """会话列表右键菜单：打开 / 重命名 / 删除。"""
+        item = self.history_list.itemAt(pos)
+        if item is None or not (item.flags() & Qt.ItemIsSelectable):
+            return
+        self.history_list.setCurrentItem(item)
+        menu = QMenu(self)
+        a_open = menu.addAction("📂 打开到聊天")
+        a_rename = menu.addAction("✏ 重命名")
+        menu.addSeparator()
+        a_delete = menu.addAction("🗑 删除")
+        chosen = menu.exec(self.history_list.mapToGlobal(pos))
+        if chosen is a_open:
+            self._on_open_conversation()
+        elif chosen is a_rename:
+            self._on_rename_conversation()
+        elif chosen is a_delete:
+            self._on_delete_conversation()
 
     def set_current_conversation_label(self, text: str):
         self.current_conversation_label.setText(f"当前会话：{text}")
@@ -2032,18 +2215,6 @@ class ChatWindow(QWidget):
         self.backend_combo.currentIndexChanged.connect(
             lambda _: self.tts_backend_requested.emit(self.backend_combo.currentData()))
         grid.addWidget(self.backend_combo, 0, 1)
-
-        # Edge 音色（保留控件但隐藏：已不再使用在线 TTS）
-        self.edge_label = QLabel("Edge 音色", page)
-        grid.addWidget(self.edge_label, 0, 2)
-        self.voice_combo = QComboBox(page)
-        for v in self.EDGE_VOICES:
-            self.voice_combo.addItem(v, v)
-        self.voice_combo.currentIndexChanged.connect(
-            lambda _: self.edge_voice_requested.emit(self.voice_combo.currentData()))
-        grid.addWidget(self.voice_combo, 0, 3)
-        self.edge_label.hide()
-        self.voice_combo.hide()
 
         # 语速
         grid.addWidget(QLabel("语速", page), 1, 0)
@@ -2222,7 +2393,7 @@ class ChatWindow(QWidget):
             self.status_label.setText(getattr(self, "_base_status", ""))
 
     def set_current_settings(self, backend: str, speed: float, scale: float,
-                             always_on_top: bool, edge_voice: str = "",
+                             always_on_top: bool,
                              font_size: int = 13, chat_font_size: int = 15):
         idx = self.backend_combo.findData(backend)
         if idx >= 0:
@@ -2250,12 +2421,6 @@ class ChatWindow(QWidget):
             self.chat_font_combo.blockSignals(True)
             self.chat_font_combo.setCurrentIndex(ci)
             self.chat_font_combo.blockSignals(False)
-        if edge_voice:
-            vi = self.voice_combo.findData(edge_voice)
-            if vi >= 0:
-                self.voice_combo.blockSignals(True)
-                self.voice_combo.setCurrentIndex(vi)
-                self.voice_combo.blockSignals(False)
 
     # ------------------------------------------------------------------ 外部填充
     def set_persona_list(self, names: list[str], active: str):
@@ -2494,13 +2659,12 @@ class ChatWindow(QWidget):
         except RuntimeError:
             pass
 
-    def _on_quit_clicked(self):
-        if QMessageBox.question(
-                self, "完全退出",
-                "将停止 Heart、GPT-SoVITS 与 Live2D，并退出 Nori 控制台。确定吗？") \
-                != QMessageBox.Yes:
-            return
-        self.quit_requested.emit()
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 首次显示时把原生标题栏染成界面同色，使顶部白条融入暗色界面
+        if not getattr(self, "_titlebar_styled", False):
+            self._titlebar_styled = True
+            apply_dark_title_bar(self, "#060a18")
 
     # ------------------------------------------------------------------ 拖放发送 ----
     def dragEnterEvent(self, event):
@@ -2519,9 +2683,7 @@ class ChatWindow(QWidget):
             event.acceptProposedAction()
 
     def closeEvent(self, event):
-        if self._quit_on_close:
-            event.accept()
-        else:
-            # 有宠物窗口时，关闭对话框只是隐藏
-            event.ignore()
-            self.hide()
+        # 右上角 × 就是“完全退出”：停止 Heart / GPT-SoVITS / Live2D 后退出程序
+        # （旧版“有宠物时仅隐藏”的行为已废弃：× 一律完全退出）
+        event.accept()
+        self.quit_requested.emit()

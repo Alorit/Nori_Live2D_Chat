@@ -97,27 +97,31 @@ live2d:
   bubble_max_sec: 12
 
 tts:
-  # 只保留 Nori 音色：GPT-SoVITS 使用 Nori 语音微调权重。
-  # 权重位于 data/voices/nori/，由 GPT_SoVITS/configs/tts_infer.yaml 加载；
+  # 只保留 Nori 音色方案：GPT-SoVITS 使用你自己的语音微调权重。
+  # 本仓库不包含任何语音模型 / 参考音频，请自行准备后填写下面两项。
   # GUI 启动时自动拉起 API，冷启动期间消息排队，API 就绪后自动朗读。
+  # 旧的 sherpa / piper / edge 后端已移除；GPT-SoVITS 不可用时可用
+  # system（Windows SAPI5）兜底：把 backend 改为 "system" 即可。
   backend: "gpt_sovits"
   order: ["gpt_sovits"]
+  # 全局语速（GUI 语速滑块写入此处；各后端可自行覆盖）
+  speed: 1.0
 
-  # GPT-SoVITS（Nori 微调模型，中英日都行，GUI 会静默启动并显示日志）
+  # GPT-SoVITS（中英日都行，GUI 会静默启动并显示日志）
   gpt_sovits:
     api_url: "http://127.0.0.1:9880"
     # 合成文本语言：auto / zh / en / ja ...
     text_lang: "auto"
-    # 参考音频（音色克隆参考）：Nori 干净单句样本
-    ref_audio_path: "D:\\Nori_Live2D_Agent\\data\\inori_voice\\nori_ref.wav"
-    # 参考音频对应的文字（已从游戏聊天记录确认）
-    prompt_text: "Nori 是最擅长玩游戏、最喜欢你陪伴的小人偶 AI！"
+    # 参考音频（音色克隆参考）：本地 wav 绝对路径，自行准备后填写
+    ref_audio_path: ""
+    # 参考音频对应的文字（可选，填写效果更好）
+    prompt_text: ""
     prompt_lang: "zh"
-    speed: 1.0
     # GUI 启动时是否自动（无窗口）拉起 GPT-SoVITS API
+    # （ref_audio_path 未填写时不会自动启动）
     auto_start: true
-    # GPT-SoVITS 安装目录（内含 runtime/pythonw.exe 与 api_v2.py）
-    runtime_dir: "D:/GPT-SoVITS-v2pro-20250604-nvidia50"
+    # GPT-SoVITS 安装目录（内含 runtime/pythonw.exe 与 api_v2.py），自行填写
+    runtime_dir: ""
 
 memory:
   # 检索后端：auto = 优先向量（如果已安装 sentence-transformers），否则 BM25
@@ -149,12 +153,14 @@ gui:
   font_size: 13
   # 聊天气泡字体大小（与界面字体分开设置）
   chat_font_size: 15
-  # 用户昵称（聊天记录中显示；可在 设置→基础设置 修改）
-  user_name: "Alorit"
+  # 用户昵称（聊天记录中显示；留空 = 首次启动向导询问，之后可在 设置→基础设置 修改）
+  user_name: ""
   # 智能体显示名兜底（各人格可在 设置→基础设置 分别修改，Nori 为默认）
   agent_name: "Nori"
   # 自定义头像（空 = 默认 emoji；可在 设置→基础设置 里选择图片）
   user_avatar: ""
+  # 语音包导出目录（空 = 默认下载目录；可在 设置→基础设置 修改）
+  voice_export_dir: ""
   # 聊天窗口初始大小（面板含 聊天/记忆/人格/控制台/设置 页签）
   chat_width: 760
   chat_height: 820

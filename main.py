@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from agent.brain import Brain
@@ -47,6 +48,7 @@ from agent.search import BaiduSearchClient
 from agent.services import ServiceManager
 from agent.tts.factory import create_backend, create_tts, probe_backends
 from gui.chat_window import ChatWindow
+from gui.first_run import FirstRunDialog
 from gui.splash import SplashWindow
 from utils.stickers import copy_to_chat_media
 from utils.tts_voices import (
@@ -264,6 +266,33 @@ class AppController(QObject):
         self._refresh_service_status()
         _stage(100, "Nori 已就绪")
 
+        # 首次使用向导：splash 关闭后询问用户称呼（设置里可随时修改）
+        QTimer.singleShot(600, self._maybe_first_run_wizard)
+
+    # ------------------------------------------------------------------
+    def _maybe_first_run_wizard(self):
+        """第一次启动且未设置称呼时，弹窗让用户输入自己的名字。"""
+        try:
+            if str(self.cfg.gui.get("user_name", "") or "").strip():
+                return
+            if bool(self.cfg.gui.get("first_run_done", False)):
+                return
+            dlg = FirstRunDialog(agent_name=str(self.chat._agent_name or "Nori"),
+                                 parent=self.chat)
+            dlg.exec()
+            name = (dlg.user_name or "").strip()
+            if name:
+                self.cfg.set_runtime("gui", "user_name", name)
+                self.cfg.save_overrides({"gui": {"user_name": name}})
+                self.chat.set_user_name(name)
+                self.chat.append_system(f"✅ 已记住你的称呼：{name}（可在 设置 → 基础设置 修改）")
+            else:
+                self.cfg.save_overrides({"gui": {"first_run_done": True}})
+                self.chat.append_system(
+                    "已跳过初次设置，将默认用“主人”称呼你；可在 设置 → 基础设置 修改。")
+        except Exception as e:
+            logging.warning("首次使用向导失败：%s", e)
+
     # ------------------------------------------------------------------
     def _wire(self):
         self.chat.send_requested.connect(self.on_user_text)
@@ -271,7 +300,6 @@ class AppController(QObject):
         self.chat.feedback_requested.connect(self.on_feedback)
         self.chat.export_requested.connect(self.on_export)
         self.chat.tts_backend_requested.connect(self.on_tts_backend)
-        self.chat.edge_voice_requested.connect(self.on_edge_voice)
         self.chat.speed_requested.connect(self.on_speed)
         self.chat.scale_requested.connect(self.on_scale)
         self.chat.always_on_top_requested.connect(self.on_always_on_top)
@@ -292,6 +320,7 @@ class AppController(QObject):
         self.chat.tts_voice_switch_requested.connect(self.on_tts_voice_switch)
         self.chat.tts_voice_import_requested.connect(self.on_tts_voice_import)
         self.chat.tts_voice_export_requested.connect(self.on_tts_voice_export)
+        self.chat.voice_export_dir_requested.connect(self.on_voice_export_dir)
         self.chat.llm_model_rename_requested.connect(self.on_llm_model_rename)
         self.chat.llm_model_delete_requested.connect(self.on_llm_model_delete)
         self.chat.memory_auto_review_requested.connect(self.on_memory_auto_review)
@@ -538,15 +567,15 @@ class AppController(QObject):
 
         # 面板初始状态
         self._refresh_status_pill()
-        speed = float(self.cfg.tts.get("sherpa", {}).get("speed", 1.0) or 1.0)
+        speed = float(self.cfg.tts.get("speed", 1.0) or 1.0)
         scale = float(self.cfg.live2d.get("scale", 1.0) or 1.0)
         top = bool(self.cfg.gui.get("pet_always_on_top", True))
-        edge_voice = str(self.cfg.tts.get("edge", {}).get("voice", ""))
         font_size = int(self.cfg.gui.get("font_size", 13) or 13)
         chat_font_size = int(self.cfg.gui.get("chat_font_size", 15) or 15)
+        self.chat.set_voice_export_dir(str(self.cfg.gui.get("voice_export_dir", "") or ""))
         self.chat.set_current_settings(
             backend=str(self.cfg.tts.get("backend", "auto")),
-            speed=speed, scale=scale, always_on_top=top, edge_voice=edge_voice,
+            speed=speed, scale=scale, always_on_top=top,
             font_size=font_size, chat_font_size=chat_font_size)
 
     # ------------------------------------------------------------------
@@ -869,11 +898,20 @@ class AppController(QObject):
         self._flush_tts_pending()
 
     @Slot(str)
-    def on_edge_voice(self, voice: str):
-        if self.tts and getattr(self.tts, "name", "") == "edge":
-            self.tts.voice = voice
-        self.cfg.set_runtime("tts", "edge", {"voice": voice})
-        self.chat.append_system(f"Edge 音色已设为：{voice}（切换到 edge 后端时生效）")
+    def on_voice_export_dir(self, path: str):
+        """设置语音包导出目录并持久化（留空 = 默认下载目录）。"""
+        path = (path or "").strip()
+        if path:
+            try:
+                Path(path).mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                self.chat.append_system(f"⚠ 导出目录不可用：{e}")
+                return
+        self.cfg.set_runtime("gui", "voice_export_dir", path)
+        self.cfg.save_overrides({"gui": {"voice_export_dir": path}})
+        self.chat.set_voice_export_dir(path)
+        self.chat.append_system(
+            f"📦 语音包导出目录已设为：{path if path else '默认下载目录'}")
 
     @Slot()
     def on_tts_status_refresh(self):
@@ -966,7 +1004,7 @@ class AppController(QObject):
 
     @Slot(str)
     def on_user_name(self, name: str):
-        name = (name or "").strip() or "Alorit"
+        name = (name or "").strip() or "主人"
         self.cfg.set_runtime("gui", "user_name", name)
         self.cfg.save_overrides({"gui": {"user_name": name}})
         self.chat.set_user_name(name)
@@ -1148,7 +1186,9 @@ class AppController(QObject):
     @Slot(str)
     def on_tts_voice_export(self, name: str):
         try:
-            dest = export_voice(self.cfg.root, name, Path("D:/Download"))
+            dest_dir = (str(self.cfg.gui.get("voice_export_dir", "") or "").strip()
+                        or str(Path.home() / "Downloads"))
+            dest = export_voice(self.cfg.root, name, Path(dest_dir))
             if not dest:
                 self.chat.append_system("⚠ 导出失败：语音包不存在或缺少参考音频")
                 return
@@ -1221,7 +1261,7 @@ class AppController(QObject):
         self._apply_speed(speed)
 
     def _apply_speed(self, speed: float):
-        self.cfg.set_runtime("tts", "sherpa", {"speed": speed})
+        self.cfg.set_runtime("tts", "speed", speed)
         if self.tts and hasattr(self.tts, "set_speed"):
             try:
                 self.tts.set_speed(speed)
@@ -1280,8 +1320,7 @@ class AppController(QObject):
         overrides = {
             "tts": {
                 "backend": self.chat.backend_combo.currentData(),
-                "edge": {"voice": self.chat.voice_combo.currentData()},
-                "sherpa": {"speed": round(self.chat.speed_slider.value() / 100.0, 2)},
+                "speed": round(self.chat.speed_slider.value() / 100.0, 2),
             },
             "llm": {
                 "api_key": self.chat.api_key_edit.text().strip(),
@@ -1344,7 +1383,7 @@ class AppController(QObject):
                 save_persona_meta(self.cfg, persona, meta)
         self.chat.set_agent_name(meta.get("agent_name") or persona)
         self.chat.set_avatar("agent", meta.get("avatar", ""))
-        self.chat.set_user_name(str(self.cfg.gui.get("user_name", "Alorit") or "Alorit"))
+        self.chat.set_user_name(str(self.cfg.gui.get("user_name", "") or "主人"))
         self.chat.set_history_personas(list_personas(self.cfg), persona)
         self._refresh_history_page(persona)
         if load_history:
@@ -1795,6 +1834,19 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("NoriLive2D")
+    # 任务栏/标题栏使用 Nori 图标而不是默认 Python 图标：
+    # 1) 进程级 AppUserModelID，让 Windows 任务栏把本进程当作独立应用；
+    # 2) 全局窗口图标（标题栏、任务栏、Alt-Tab 都会用它）。
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Alorit.Nori.Live2DChat.1")
+        except Exception:
+            pass
+    icon_path = PROJECT_ROOT / "gui" / "assets" / "nori_icon.png"
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
     # 有宠物窗口时，对话框关闭不代表退出；只有对话框时，关了窗口就退出
     app.setQuitOnLastWindowClosed(args.no_pet)
 

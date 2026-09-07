@@ -27,7 +27,11 @@ class GPTSoVITSTTS(TTSBackend):
         self.ref_audio_path = str(g.get("ref_audio_path", "")) if isinstance(g, dict) else ""
         self.prompt_text = str(g.get("prompt_text", "")) if isinstance(g, dict) else ""
         self.prompt_lang = str(g.get("prompt_lang", "zh")) if isinstance(g, dict) else "zh"
-        self.speed_factor = float(g.get("speed", 1.0)) if isinstance(g, dict) else 1.0
+        # 语速：优先 gpt_sovits.speed，未设置时回退到全局 tts.speed（语速滑块写这里）
+        speed = g.get("speed") if isinstance(g, dict) else None
+        if speed is None:
+            speed = cfg.tts.get("speed", 1.0) if cfg is not None else 1.0
+        self.speed_factor = float(speed or 1.0)
         self.timeout = 120
 
     def available(self) -> bool:

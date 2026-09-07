@@ -34,7 +34,7 @@
 ## 3. 目录结构
 
 ```
-Nori_Live2D_Agent/
+Nori_Live2D_Chat/
 ├─ main.py                 # 程序入口：AppController、线程 Worker、启动逻辑
 ├─ run.bat                 # 一键启动，chcp 65001，用 pythonw 无窗口拉起 main.py
 ├─ config.yaml             # 技术配置；绝对不能放人格 System Prompt 文本
@@ -147,7 +147,7 @@ tts:
   gpt_sovits:
     api_url: "http://127.0.0.1:9880"
     text_lang: "auto"
-    ref_audio_path: "D:\\Nori_Live2D_Agent\\data\\inori_voice\\nori_ref.wav"
+    ref_audio_path: "D:\\Nori_Live2D_Chat\\data\\inori_voice\\nori_ref.wav"
     prompt_text: "Nori 是最擅长玩游戏、最喜欢你陪伴的小人偶 AI！"
     prompt_lang: "zh"
     speed: 1.0

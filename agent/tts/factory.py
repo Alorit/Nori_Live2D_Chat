@@ -1,22 +1,23 @@
-"""TTS 后端工厂：按可用性自动选择。"""
+"""TTS 后端工厂：按可用性自动选择。
+
+当前仅保留两个后端：
+- gpt_sovits：GPT-SoVITS API（Nori 音色，主后端，由 GUI 自动静默拉起）
+- system：Windows SAPI5（GPT-SoVITS 不可用时的最后兜底）
+
+旧的 sherpa / piper / edge 后端已移除，备份见 D:/Nori_Backup/。
+"""
 from __future__ import annotations
 
 import logging
 
 from .base import TTSBackend
-from .edge_tts import EdgeTTS
 from .gpt_sovits_tts import GPTSoVITSTTS
-from .piper_tts import PiperTTS
-from .sherpa_tts import SherpaTTS
 from .system_tts import SystemTTS
 
 logger = logging.getLogger("tts.factory")
 
 _CLASSES = {
-    "sherpa": SherpaTTS,
-    "piper": PiperTTS,
     "system": SystemTTS,
-    "edge": EdgeTTS,
     "gpt_sovits": GPTSoVITSTTS,
 }
 
@@ -43,7 +44,7 @@ def create_backend(name: str, cfg) -> TTSBackend:
 
 def create_tts(cfg) -> TTSBackend:
     """按配置选择可用的 TTS 后端。找不到可用后端时抛出 RuntimeError。"""
-    order = cfg.tts.get("order", ["sherpa", "piper", "system", "edge"])
+    order = cfg.tts.get("order", ["gpt_sovits", "system"])
     wanted = cfg.tts.get("backend", "auto")
     if wanted == "auto":
         candidates = order
@@ -62,5 +63,6 @@ def create_tts(cfg) -> TTSBackend:
             errors.append(f"{name}: {e}")
 
     raise RuntimeError(
-        "没有可用的 TTS 后端。请先运行 scripts/download_tts_models.py 下载本地模型，"
-        "或检查依赖是否安装。详情：" + "; ".join(errors))
+        "没有可用的 TTS 后端。GPT-SoVITS 冷启动约需 1 分钟，就绪后会自动切换；"
+        "也可以把 config.yaml 的 tts.backend 改为 system 使用 Windows 系统语音兜底。"
+        "详情：" + "; ".join(errors))

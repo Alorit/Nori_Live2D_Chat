@@ -1,6 +1,4 @@
-# Nori_Live2D_Chat v0.2.0
-
-(怎么这东西真有人用啊Σ( ° △ °|||)︴)
+# Live2D_agent_byAlorit v0.2.1
 
 一个由 **Alorit 与 AI/Agent 协作完成** 的 Windows 桌面 AI 宠物 / 陪伴助手项目（Nori AI 桌面宠物）。
 
@@ -8,11 +6,28 @@
 
 > ⚠️ 本项目是粉丝自制项目，与 I_NORI 官方无关。
 > 展示图仅用于效果展示，相关角色与人格版权归原权利方所有。
-> 本仓库 **不包含** 任何 Live2D 模型、人格文件、TTS 模型、语音样本、参考音频或 API Key，请自行获取并导入。
+> 本仓库 **不包含** 任何 Live2D 模型、人格文件、TTS 模型权重或 API Key；**Nori TTS 语音包随 Release 附件提供**（见下方安装说明）。
 
 ---
 
-## ✨ v0.2.0 更新内容
+## ✨ v0.2.1 更新内容
+
+- **首次使用向导**：第一次启动弹窗询问「怎么称呼你」（默认“主人”），保存后 Heart 私人思考同步使用该称呼，不再写死主人名字；随时可在 设置 → 基础设置 修改
+- **界面全面优化**：
+  - 任务栏 / 标题栏 / Alt-Tab 图标换成 Nori 头像（不再是默认 Python 图标）
+  - 移除「⏻ 完全退出」按钮：**右上角 × 直接完全退出**（自动停止 Heart / GPT-SoVITS / Live2D）
+  - 移除界面内「🎀 Nori 控制台」大标题，信息交由系统标题栏
+  - Windows 原生标题栏暗色化（Win11 直接同色，Win10 沉浸式深色），顶部白条融入界面
+  - **聊天记录页重做**：卡片式会话（标题 + ★主对话 / 消息数 / 相对时间）、按名称实时筛选、右键菜单操作、空状态提示
+- **TTS 精简与修正**：
+  - 仅保留 GPT-SoVITS（Nori 音色）+ Windows SAPI5 兜底，移除 sherpa / piper / edge 后端
+  - 语速统一保存到 `tts.speed`（修复旧版语速滑块失效的问题）
+  - 语音包导出目录可在 设置 → 基础设置 自定义（不再写死 `D:/Download`）
+- **Release 附带 Nori TTS 语音包**（`Nori_TTS_Voice_nori.zip`，GPT-SoVITS 微调权重 + 参考音频），下载解压到 `data/voices/` 即可在设置里切换
+
+---
+
+## 📜 v0.2.0 更新内容
 
 - **彻底移除旧 MCP Live2D 方案**（Electron / `live2d_mcp_app`）
 - **切换为原生 Live2D 控制器**：
@@ -34,8 +49,9 @@
 ## 🧩 功能特性
 
 - **DeepSeek API 驱动**：OpenAI 兼容接口，`api_key` 留空配置，填入即用
+- **首次使用向导**：第一次启动会询问怎么称呼你（默认“主人”），之后可在 设置 → 基础设置 修改；Heart 的私人思考也会使用这个称呼
 - **原生 Live2D 控制**：LLM 在回复里输出 `[expr:开心]` / `[motion:挥手]` 标签，程序解析后通过 **Nori-Desktop-Pet** 的本地 HTTP 接口驱动模型表情和动作；TTS 说话状态也会推给 Live2D 做口型
-- **本地 TTS 语音**：GPT-SoVITS + Nori 音色（语音数据需自行准备）
+- **本地 TTS 语音**：GPT-SoVITS + **Nori 音色**（微调权重随 Release 附件提供，见下方安装说明）；不可用时可改用 Windows SAPI5 兜底
 - **文字对话框**：本地 Qt 控制台，I_NORI 风格深色霓虹气泡
 - **长期记忆**：SQLite + BM25 / 可选向量检索，按人格隔离
 - **LLM 上下文压缩**：保留最近 N 条原文，更早对话压缩成摘要
@@ -44,6 +60,7 @@
 - **持续学习闭环**：反思整合、👍👎 反馈、记忆遗忘、JSONL 导出
 - **Heart 自主唤醒进程**：AI 定时私人思考、主动说话/表情/动作
 - **MCP / Skills 工具扩展**：支持 `streamable_http` / `sse` / `stdio`
+- **窗口即关即退**：右上角 × 直接停止 Heart / GPT-SoVITS / Live2D 并完全退出
 - **无模型也能跑**：不填 Live2D 模型时，自动使用内置 QPainter 动画宠物
 
 ---
@@ -53,7 +70,6 @@
 - Windows 10 / 11（Linux 也能跑，但 Live2D 透明窗口效果最佳在 Windows）
 - Python 3.10+（在 3.14 上测试通过）
 - 无需 .NET SDK / 运行时（已内置自包含原生 Live2D 宿主）
-- 可选：NVIDIA 显卡 + `onnxruntime-gpu` 加速 TTS
 
 ---
 
@@ -95,12 +111,19 @@ python main.py
 
 `config.yaml` 不保存真实 Key，敏感配置写入 `data/settings_overrides.json` 或使用环境变量。
 
+### 安装 Nori 语音包（TTS 音色）
+
+1. 到 [Releases](https://github.com/Alorit/Nori_Live2D_Chat/releases) 下载 `Nori_TTS_Voice_nori.zip`
+2. 解压到项目的 `data/voices/` 下，得到 `data/voices/nori/`（内含 GPT-SoVITS 微调权重 `nori_s1.ckpt` / `nori_s2.pth` 与参考音频 `nori_ref.wav`）
+3. 在 `config.yaml` 填写 GPT-SoVITS 安装目录（`tts.gpt_sovits.runtime_dir`），启动后 GUI 会自动拉起 API 并使用 Nori 音色
+4. 也可以在 设置 → 基础设置 → TTS 语音包 里导入 / 切换其它音色
+
 ---
 
 ## 🗂 目录结构
 
 ```
-Nori_Live2D_Agent/
+Nori_Live2D_Chat/
 ├── main.py                 # 程序入口
 ├── config.yaml             # 非敏感配置
 ├── agent/                  # Agent 核心
@@ -128,7 +151,7 @@ Nori_Live2D_Agent/
 
 | 项目 / 组织 | 说明 | 协议 |
 |---|---|---|
-| [Nori-Desktop-Pet](https://github.com/MF-Dust/Nori-Desktop-Pet) | v0.2.0 使用的原生 Live2D 桌宠宿主（.NET Avalonia + OpenGL） | GPL-3.0（以该仓库 LICENSE 为准） |
+| [Nori-Desktop-Pet](https://github.com/MF-Dust/Nori-Desktop-Pet) | 使用的原生 Live2D 桌宠宿主（.NET Avalonia + OpenGL） | GPL-3.0（以该仓库 LICENSE 为准） |
 | [Live2D Cubism SDK](https://www.live2d.com/) | Live2D 模型渲染 SDK | 以 Live2D 官方许可为准 |
 | [mitscherlich/live2d-mcp](https://github.com/mitscherlich/live2d-mcp) | v0.1 使用的 Live2D MCP / Electron 参考实现（v0.2 已移除） | 以该仓库 LICENSE 为准 |
 | [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | 本地 TTS 推理框架 | 以该仓库 LICENSE 为准 |

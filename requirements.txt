@@ -7,15 +7,11 @@ pyyaml>=6.0
 requests>=2.31
 sounddevice>=0.4.6
 
-# 本地 TTS 引擎
-sherpa-onnx>=1.12
-piper-tts>=1.6
-
-# 可选：在线 TTS 兜底（默认不启用）
-edge-tts>=7.0
-
 # MCP 技能客户端（Skills 用）
 mcp>=2.0
 
 # 可选：向量长期记忆（需要 PyTorch，体积较大，默认用 BM25 即可）
 # sentence-transformers>=3.0
+
+# 说明：TTS 只保留 GPT-SoVITS（本地 API，独立安装）+ Windows SAPI5（系统自带，无需依赖）；
+# 旧的 sherpa-onnx / piper-tts / edge-tts 后端已移除，备份见 D:/Nori_Backup/

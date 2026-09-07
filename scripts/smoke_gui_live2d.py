@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""GUI Live2D 模式冒烟：设置页模型下拉框与完全退出按钮可用。"""
+"""GUI Live2D 模式冒烟：设置页模型下拉框可用，关闭窗口即完全退出。"""
 import os
 import sys
 from pathlib import Path
@@ -23,7 +23,11 @@ w.set_live2d_models([{"path": "Nori/ariu.model3.json", "name": "Nori/ariu"}],
                     "Nori/ariu.model3.json")
 assert w.model_combo.currentData() == "Nori/ariu.model3.json"
 assert not w.model_combo.isHidden()
-assert w.quit_btn.text() == "⏻ 完全退出"
+# 右上角 × 即完全退出：close() 应发出 quit_requested 信号
+got = []
+w.quit_requested.connect(lambda: got.append(True))
+w.close()
+assert got and got[0]
 print("live2d settings page OK")
 QTimer.singleShot(300, app.quit)
 app.exec()

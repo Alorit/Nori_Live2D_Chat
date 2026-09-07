@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""完全退出集成测试：按钮路径应停掉 Heart/GPT-SoVITS 并退出。"""
+"""完全退出集成测试：关闭窗口（×）路径应停掉 Heart/GPT-SoVITS 并退出。"""
 import os
 import sys
 import time
@@ -26,6 +26,7 @@ time.sleep(4)
 print("before:", ctrl.services.status())
 assert ctrl.services.status()["heart"]
 
+# × 关闭窗口 → closeEvent 发出 quit_requested → 停服务并退出
 QTimer.singleShot(800, ctrl.on_quit_requested)
 code = app.exec()
 print("app exited", code)

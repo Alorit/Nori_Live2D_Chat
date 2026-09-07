@@ -120,6 +120,12 @@ class NoriHeart:
         min_minutes = int(self.h.get("min_wake_minutes", 2))
         max_minutes = int(self.h.get("max_wake_minutes", 120))
         persona_text = load_persona_text(self.cfg)
+        # 用户称呼：gui.user_name 由首次使用向导 / 设置页维护，留空则用「主人」
+        user_name = str(self.cfg.gui.get("user_name", "") or "").strip()
+        if user_name and user_name != "主人":
+            master_line = f"- 主人的名字是 {user_name}，不要把他认错。"
+        else:
+            master_line = "- 没有单独设置主人名字，统一用「主人」称呼对话用户。"
 
         prompt = f"""{persona_text}
 
@@ -148,7 +154,7 @@ class NoriHeart:
 
 规则：
 - 大部分时候 action 用 none（安静地想），偶尔主动做小动作或说一句话，不要频繁打扰主人。
-- 主人的名字是 Alorit，不要把他认错。
+{master_line}
 - 不要用括号描述状态。"""
 
         resp = self.client.chat.completions.create(
