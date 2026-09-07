@@ -25,24 +25,7 @@
   - 语音包导出目录可在 设置 → 基础设置 自定义（不再写死 `D:/Download`）
 - **Release 附带 Nori TTS 语音包**（`Nori_TTS_Voice_nori.zip`，GPT-SoVITS 微调权重 + 参考音频），下载解压到 `data/voices/` 即可在设置里切换
 
----
-
-## 📜 v0.2.0 更新内容
-
-- **彻底移除旧 MCP Live2D 方案**（Electron / `live2d_mcp_app`）
-- **切换为原生 Live2D 控制器**：
-  - 使用 [Nori-Desktop-Pet](https://github.com/MF-Dust/Nori-Desktop-Pet)（.NET Avalonia + OpenGL）作为桌宠渲染与控制模块
-  - Python 通过本地 HTTP `http://127.0.0.1:47835` 控制模型、表情、动作、口型、窗口、缩放
-  - 新增 `--pet-only` 独立桌宠模式，不再拉起 WebView / MCP 主界面
-- **LLM 模型列表改为“获取模型列表”**：
-  - 设置页新增 `🔄 获取模型列表`，从当前 OpenAI 兼容 Base URL 拉取模型（支持 DeepSeek / Ollama / 其它兼容服务）
-  - 保留本地自定义模型与当前模型选择
-- **缩放上限锁为 2.0x**：
-  - 滑块范围 `0.5x ~ 2.0x`
-  - 原生侧同步限制 `0.1x ~ 2.0x`
-  - 缩放时窗口改为底部（脚底）锚定，避免放大时角色“向上跑”
-- 清理旧 MCP Live2D 相关文件、脚本与文档残留
-- 更新 `README`、`DISCLAIMER`、`LICENSE`，补充参考项目与贡献者
+> 📜 完整更新历史见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
