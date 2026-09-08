@@ -2,7 +2,8 @@
 
 一个由 **Alorit 与 AI/Agent 协作完成** 的 Windows 桌面 AI 宠物 / 陪伴助手项目（Nori AI 桌面宠物）。
 
-![展示图](docs/preview.png)
+![展示图]<img width="2560" height="1600" alt="屏幕截图(81)" src="https://github.com/user-attachments/assets/2f2db406-1b8d-4a7a-8644-54ce83f4d527" />
+
 
 > ⚠️ 本项目是粉丝自制项目，与 I_NORI 官方无关。
 > 展示图仅用于效果展示，相关角色与人格版权归原权利方所有。
