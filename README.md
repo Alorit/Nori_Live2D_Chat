@@ -6,7 +6,7 @@
 
 > ⚠️ 本项目是粉丝自制项目，与 I_NORI 官方无关。
 > 展示图仅用于效果展示，相关角色与人格版权归原权利方所有。
-> 本仓库 **不包含** 任何 Live2D 模型、人格文件、TTS 模型权重或 API Key；**Nori TTS 语音包随 Release 附件提供**（见下方安装说明）。
+> 本仓库 **不包含** 任何 Live2D 模型、人格文件或 API Key；**Nori TTS 语音包（粉丝训练的 GPT-SoVITS 微调权重）随 Release 附件提供**，仅限个人学习 / 研究，禁止商用、禁止再训练或二次分发——详见 [DISCLAIMER.md](DISCLAIMER.md)「Nori TTS 语音包」条目。
 
 ---
 
@@ -52,11 +52,14 @@
 
 - Windows 10 / 11（Linux 也能跑，但 Live2D 透明窗口效果最佳在 Windows）
 - Python 3.10+（在 3.14 上测试通过）
-- 无需 .NET SDK / 运行时（已内置自包含原生 Live2D 宿主）
+- 无需 .NET SDK / 运行时（**Release 完整包**已内置自包含原生 Live2D 宿主）
 
 ---
 
 ## 🚀 快速开始
+
+> 📦 **推荐**：直接从 [Releases](https://github.com/Alorit/Nori_Live2D_Chat/releases) 下载 `Live2D_agent_byAlorit_v0.2.1.zip` 完整包（已内置 Live2D 宿主，解压即用）。
+> 若你选择 **git 克隆本仓库**：请先从 Release 完整包中把 `vendor/` 目录复制到项目根目录（或自行构建 [Nori-Desktop-Pet](https://github.com/MF-Dust/Nori-Desktop-Pet)），否则 Live2D 窗口不会显示（纯对话框模式不受影响）。
 
 ```bat
 :: 首次安装依赖
@@ -75,12 +78,12 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### 原生 Live2D 宿主（已内置）
+### 原生 Live2D 宿主（Release 完整包内置）
 
-本项目已内置**自包含预编译**的 **Nori-Desktop-Pet** 原生宿主：
+**Nori-Desktop-Pet** 原生宿主为**自包含预编译**版本，随 Release 完整包（`Live2D_agent_byAlorit_v*.zip`）内置：
 
-- 位置：`vendor/nori_desktop_pet/`
-- 无需单独克隆或构建 [Nori-Desktop-Pet](https://github.com/MF-Dust/Nori-Desktop-Pet)
+- 位置：`vendor/nori_desktop_pet/`（体积较大，**不入 Git**，仅随 Release 完整包分发）
+- git 克隆用户：从 Release 完整包复制 `vendor/` 到项目根目录，或自行构建
 - **无需额外安装 .NET 运行时**
 - 运行 `run.bat` 后，Python 会自动以 `--pet-only` 拉起内置原生桌宠
 
@@ -121,6 +124,7 @@ Nori_Live2D_Chat/
 ├── vision_mcp/             # 独立视觉 MCP
 ├── scripts/                # 工具与测试
 ├── data/                   # 运行时数据（默认头像/表情包等）
+├── vendor/                 # 原生 Live2D 宿主（不入 Git，随 Release 完整包分发）
 ├── DISCLAIMER.md           # 免责声明
 ├── LICENSE                 # MIT License
 └── requirements.txt
@@ -137,7 +141,7 @@ Nori_Live2D_Chat/
 | [Nori-Desktop-Pet](https://github.com/MF-Dust/Nori-Desktop-Pet) | 使用的原生 Live2D 桌宠宿主（.NET Avalonia + OpenGL） | GPL-3.0（以该仓库 LICENSE 为准） |
 | [Live2D Cubism SDK](https://www.live2d.com/) | Live2D 模型渲染 SDK | 以 Live2D 官方许可为准 |
 | [mitscherlich/live2d-mcp](https://github.com/mitscherlich/live2d-mcp) | v0.1 使用的 Live2D MCP / Electron 参考实现（v0.2 已移除） | 以该仓库 LICENSE 为准 |
-| [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | 本地 TTS 推理框架 | 以该仓库 LICENSE 为准 |
+| [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | 本地 TTS 推理框架 | MIT License |
 
 **致谢与版权声明**：Nori-Desktop-Pet 由 [erhiolab](https://github.com/erhiolab)（洱海）、[MF-Dust](https://github.com/MF-Dust)、[qicajie](https://github.com/qicajie)、[SakuraStar](https://github.com/SakuraStar) 等开发/维护；[mitscherlich](https://github.com/mitscherlich) 为 live2d-mcp 作者；Live2D Inc. 为 Live2D Cubism SDK 版权方；GPT-SoVITS 版权归其项目作者。
 
@@ -153,9 +157,10 @@ Nori_Live2D_Chat/
 
 - **本项目（Python 主程序）**：代码部分使用 **MIT License**，详见 [LICENSE](LICENSE)
 - **Nori-Desktop-Pet（原生 Live2D 宿主）**：使用 **GPL-3.0**，详见 [Nori-Desktop-Pet LICENSE](https://github.com/MF-Dust/Nori-Desktop-Pet/blob/main/LICENSE)
-- **Live2D Cubism SDK**：以 Live2D 官方许可为准
-- **GPT-SoVITS**：以该仓库 LICENSE 为准
-- **第三方资产**：版权归原权利方所有
+- **Live2D Cubism SDK**：Release 完整包内的宿主程序内嵌 Cubism Core 运行时，其分发与使用遵循 Live2D Cubism SDK 官方发布许可，使用前请自行确认
+- **GPT-SoVITS**：**MIT License**
+- **Nori TTS 语音包 / 默认头像 / 展示图**：I_NORI 相关粉丝训练 / 粉丝素材，仅限个人学习与研究，禁止商用与二次分发，详见 [DISCLAIMER.md](DISCLAIMER.md)
+- **其它第三方资产**：版权归原权利方所有
 - 完整风险提示与免责声明见 [DISCLAIMER.md](DISCLAIMER.md)
 
 ---
@@ -164,7 +169,6 @@ Nori_Live2D_Chat/
 
 本项目为粉丝自制、非官方项目，与 I_NORI、Live2D、GPT-SoVITS 官方均无隶属或授权关系。使用前请阅读 [DISCLAIMER.md](DISCLAIMER.md)。
 
-- 不包含任何 Live2D 模型
-- 不包含任何 TTS 模型 / 参考音频 / 语音权重
-- 不包含人格 `.md` 文件
-- 不包含任何 API Key
+- Git 仓库本体不包含任何 Live2D 模型、人格 `.md` 文件与 API Key
+- **Nori TTS 语音包随 Release 附件提供**：粉丝使用 I_NORI 语音样本训练的 GPT-SoVITS 微调权重，仅限个人学习 / 研究，禁止商用、禁止再训练或二次分发；权利方如有异议请通过 Issues 联系，确认后 72 小时内删除
+- 仓库内置的默认头像 `data/avatars/nori_avatar.png` 为 I_NORI 角色图片，仅作占位展示，版权归原权利方所有
