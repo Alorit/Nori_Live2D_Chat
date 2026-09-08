@@ -6,7 +6,7 @@
 
 > ⚠️ 本项目是粉丝自制项目，与 I_NORI 官方无关。
 > 展示图仅用于效果展示，相关角色与人格版权归原权利方所有。
-> 本仓库 **不包含** 任何 Live2D 模型、人格文件或 API Key；**Nori TTS 语音包（粉丝训练的 GPT-SoVITS 微调权重）随 Release 附件提供**，仅限个人学习 / 研究，禁止商用、禁止再训练或二次分发——详见 [DISCLAIMER.md](DISCLAIMER.md)「Nori TTS 语音包」条目。
+> 本仓库 **不包含** 任何 Live2D 模型、人格文件,如需要请加官方QQ群在群文件中获取：1041616195；**Nori TTS 语音包（粉丝训练的 GPT-SoVITS 微调权重）随 Release 附件提供**，仅限个人学习 / 研究，禁止商用、禁止再训练或二次分发——详见 [DISCLAIMER.md](DISCLAIMER.md)「Nori TTS 语音包」条目。
 
 ---
 
