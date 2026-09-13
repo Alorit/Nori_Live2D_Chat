@@ -1,4 +1,4 @@
-# Nori_Live2D_Chat v0.2.1
+# Nori_Live2D_Chat v0.2.2
 
 一个由 **Alorit 与 AI/Agent 协作完成** 的 Windows 桌面 AI 宠物 / 陪伴助手项目（Nori AI 桌面宠物）。
 
@@ -11,20 +11,24 @@
 
 ---
 
-## ✨ v0.2.1 更新内容
+## ✨ v0.2.2 更新内容
 
-- **首次使用向导**：第一次启动弹窗询问「怎么称呼你」（默认“主人”），保存后 Heart 私人思考同步使用该称呼，不再写死主人名字；随时可在 设置 → 基础设置 修改
-- **界面全面优化**：
-  - 任务栏 / 标题栏 / Alt-Tab 图标换成 Nori 头像（不再是默认 Python 图标）
-  - 移除「⏻ 完全退出」按钮：**右上角 × 直接完全退出**（自动停止 Heart / GPT-SoVITS / Live2D）
-  - 移除界面内「🎀 Nori 控制台」大标题，信息交由系统标题栏
-  - Windows 原生标题栏暗色化（Win11 直接同色，Win10 沉浸式深色），顶部白条融入界面
-  - **聊天记录页重做**：卡片式会话（标题 + ★主对话 / 消息数 / 相对时间）、按名称实时筛选、右键菜单操作、空状态提示
-- **TTS 精简与修正**：
-  - 仅保留 GPT-SoVITS（Nori 音色）+ Windows SAPI5 兜底，移除 sherpa / piper / edge 后端
-  - 语速统一保存到 `tts.speed`（修复旧版语速滑块失效的问题）
-  - 语音包导出目录可在 设置 → 基础设置 自定义（不再写死 `D:/Download`）
-- **Release 附带 Nori TTS 语音包**（`Nori_TTS_Voice_nori.zip`，GPT-SoVITS 微调权重 + 参考音频），下载解压到 `data/voices/` 即可在设置里切换
+本次是**稳定性修复版**，重点解决「Nori 完全没有声音」以及几处会让功能静默失效的问题。
+
+### 🔧 修复
+
+- **GPT-SoVITS 起不来 → Nori 完全没有声音**：`tts_infer.yaml` 里的权重路径在项目目录改名 / 搬家后仍指向旧路径，服务启动即崩溃，界面永远停在「⏳ 冷启动中」。现在启动前自动自检权重路径，失效就用当前语音包重写
+- **Windows SAPI5 兜底永远不可达**：`tts.order` 只写主后端时不会尝试 system 后端。现在兜底链一定带上 system（`tts.allow_system_fallback: false` 可关）；首选后端约 90 秒仍不就绪会自动回落并朗读排队消息，冷启动期间依旧「排队等 Nori 音色」
+- **应用语音包会把参考文本写空**，导致 GPT-SoVITS 退回「无参考文本」模式、音色劣化；现在缺参考文本时保留原值，并支持语音包 `meta.json` 的 `prompt_lang`
+- **长期记忆 / 行为规则 / 滚动摘要 / 当前时间不注入**：人格 `.md` 没写占位符时（成品人格很常见）这些内容全都不进 System Prompt。现在自动附加在末尾，可用 `memory.inject_context: false` 关掉
+- **Heart 可能无限唤醒、持续消耗额度**：`next_wake_minutes` 返回 `null` 或带单位文本时旧代码抛异常、`next_wake_at` 不推进，变成每 20 秒调一次 LLM；现已兜底
+- **跨人格会话「聊天记录消失」**：打开 / 新建别人格的会话或删除当前人格后，消息按生效人格入库、按会话人格读取，重开显示为空；现在会自动对齐人格
+- 朗读结束不再抛被静默吞掉的 `AttributeError`
+
+### ⚡ 优化
+
+- **界面不再被后台操作卡死**：Live2D 窗口控制（原最坏 30 秒忙等）、服务启停（tasklist / PowerShell 单次 8~12 秒）、「🔄 获取模型列表」（30 秒网络请求）、口型同步（原每 60ms 一次 HTTP）、完全退出（后台停服务 + 12 秒硬顶）全部移出主线程
+- 退出时先等在飞的发送 / 整合任务收尾再关数据库，避免最后一轮对话静默丢失
 
 > 📜 完整更新历史见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -52,7 +56,7 @@
 
 ## 🚀 快速开始
 
-> 📦 **推荐**：直接从 [Releases](https://github.com/Alorit/Nori_Live2D_Chat/releases) 下载 `Live2D_agent_byAlorit_v0.2.1.zip` 完整包（已内置 Live2D 宿主，解压即用）。
+> 📦 **推荐**：直接从 [Releases](https://github.com/Alorit/Nori_Live2D_Chat/releases) 下载 `Live2D_agent_byAlorit_v*.zip` 完整包（已内置 Live2D 宿主，解压即用）。
 > 若你选择 **git 克隆本仓库**：请先从 Release 完整包中把 `vendor/` 目录复制到项目根目录（或自行构建 [Nori-Desktop-Pet](https://github.com/MF-Dust/Nori-Desktop-Pet)），否则 Live2D 窗口不会显示（纯对话框模式不受影响）。
 
 ```bat

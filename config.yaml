@@ -100,10 +100,13 @@ tts:
   # 只保留 Nori 音色方案：GPT-SoVITS 使用你自己的语音微调权重。
   # 本仓库不包含任何语音模型 / 参考音频，请自行准备后填写下面两项。
   # GUI 启动时自动拉起 API，冷启动期间消息排队，API 就绪后自动朗读。
-  # 旧的 sherpa / piper / edge 后端已移除；GPT-SoVITS 不可用时可用
-  # system（Windows SAPI5）兜底：把 backend 改为 "system" 即可。
+  # 旧的 sherpa / piper / edge 后端已移除；GPT-SoVITS 不可用时用
+  # system（Windows SAPI5）兜底。
   backend: "gpt_sovits"
-  order: ["gpt_sovits"]
+  order: ["gpt_sovits", "system"]
+  # 首选后端长时间不就绪（约 90 秒）时自动回落到 order 里的其它后端（即 system）；
+  # 设为 false 则只等 GPT-SoVITS，不启用系统语音。
+  allow_system_fallback: true
   # 全局语速（GUI 语速滑块写入此处；各后端可自行覆盖）
   speed: 1.0
 
@@ -131,6 +134,10 @@ memory:
   vector_model: "BAAI/bge-small-zh-v1.5"
   # 每轮注入系统提示的长期记忆条数
   top_k: 8
+  # 人格 .md 里没有写 {{memory}}/{{rules}}/{{summary}}/{{time}} 占位符时，
+  # 是否自动把这些动态上下文附加到 System Prompt 末尾；
+  # 设为 false 就退回“只用 .md 原文”，记忆/规则/时间都不会进提示词
+  inject_context: true
   # 每隔多少轮用户对话触发一次后台反思整合（提取事实/规则/摘要）
   consolidate_interval: 10
   # 记忆库最大条数，超过后会遗忘低重要度的旧记忆

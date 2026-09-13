@@ -11,7 +11,32 @@ import sys
 import time
 from pathlib import Path
 
+import yaml
+
+from utils.tts_voices import update_gpt_sovits_yaml, voice_pack_weights, voices_dir
+
 logger = logging.getLogger("agent.services")
+
+
+def gsv_expected_to_start(cfg) -> bool:
+    """GPT-SoVITS 是否“稍后会就绪”（已配置自动启动，且 runtime 与参考音频都在）。
+
+    冷启动阶段返回 True：此时应当排队等 Nori 音色，而不是先用系统音色念出来。
+    """
+    g = cfg.tts.get("gpt_sovits", {})
+    g = g if isinstance(g, dict) else {}
+    if not bool(g.get("auto_start", True)):
+        return False
+    runtime = str(g.get("runtime_dir", "") or "").strip()
+    ref = str(g.get("ref_audio_path", "") or "").strip()
+    if not runtime or not ref or not Path(ref).is_file():
+        return False
+    rt = Path(runtime)
+    if not rt.is_absolute():
+        rt = cfg.root / rt
+    has_python = ((rt / "runtime" / "pythonw.exe").exists()
+                  or (rt / "runtime" / "python.exe").exists())
+    return (rt / "api_v2.py").exists() and has_python
 
 
 def _creationflags():
@@ -243,6 +268,59 @@ class ServiceManager:
             pass
         return False
 
+    def _active_voice_pack(self) -> tuple[Path | None, Path | None, Path | None]:
+        """当前语音包目录与其 (SoVITS 权重, GPT 权重)：优先配置的参考音频所在包。"""
+        candidates: list[Path] = []
+        g = self.cfg.tts.get("gpt_sovits", {})
+        ref = str(g.get("ref_audio_path", "") or "") if isinstance(g, dict) else ""
+        if ref:
+            candidates.append(Path(ref).parent)
+        vd = voices_dir(self.cfg.root)
+        if vd.is_dir():
+            candidates.extend(p for p in sorted(vd.iterdir()) if p.is_dir())
+        for d in candidates:
+            s1, s2 = voice_pack_weights(d)
+            if s1 and s2:
+                return d, s1, s2
+        return None, None, None
+
+    def repair_gsv_weights(self, rt: Path) -> None:
+        """启动前自检 tts_infer.yaml 的权重路径，失效时用当前语音包自动修复。
+
+        典型场景：项目目录改名 / 搬家后 yaml 里仍写着旧的绝对路径，
+        GPT-SoVITS 会直接 FileNotFoundError 退出，表现为 TTS 永远「冷启动中」。
+        """
+        yaml_path = rt / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
+        if not yaml_path.is_file():
+            return
+        try:
+            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            logger.warning("读取 %s 失败：%s", yaml_path, e)
+            return
+
+        custom = data.get("custom") or {}
+        paths = [str(custom.get("t2s_weights_path", "") or ""),
+                 str(custom.get("vits_weights_path", "") or "")]
+
+        def _exists(p: str) -> bool:
+            if not p:
+                return False
+            path = Path(p.replace("\\", "/"))
+            if not path.is_absolute():
+                path = rt / path
+            return path.is_file()
+
+        if all(_exists(p) for p in paths):
+            return
+        voice_path, s1, s2 = self._active_voice_pack()
+        if not (voice_path and s1 and s2):
+            logger.warning("GPT-SoVITS 权重路径已失效，且找不到可用语音包：%s",
+                           " / ".join(paths))
+            return
+        if update_gpt_sovits_yaml(rt, voice_path, s1, s2):
+            logger.info("已自动修复 GPT-SoVITS 权重路径 → %s", voice_path)
+
     def start_gpt_sovits(self) -> bool:
         if self.gsv_is_running():
             logger.info("GPT-SoVITS API 已在运行（%s）",
@@ -252,6 +330,10 @@ class ServiceManager:
         if not rt:
             logger.warning("未找到 GPT-SoVITS runtime_dir，无法启动")
             return False
+        try:
+            self.repair_gsv_weights(rt)
+        except Exception as e:
+            logger.warning("自检 GPT-SoVITS 权重路径失败：%s", e)
         pyw = rt / "runtime" / "pythonw.exe"
         if not pyw.exists():
             logger.warning("找不到 %s", pyw)

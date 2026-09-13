@@ -42,14 +42,32 @@ def create_backend(name: str, cfg) -> TTSBackend:
     return cls(cfg)
 
 
-def create_tts(cfg) -> TTSBackend:
-    """按配置选择可用的 TTS 后端。找不到可用后端时抛出 RuntimeError。"""
-    order = cfg.tts.get("order", ["gpt_sovits", "system"])
-    wanted = cfg.tts.get("backend", "auto")
+def candidate_names(cfg, allow_fallback: bool = True) -> list[str]:
+    """按配置算出后端尝试顺序。
+
+    allow_fallback=False 时只用首选后端（冷启动阶段用：宁可在提示文案里排队等
+    GPT-SoVITS 就绪，也不要先用系统音色把话念出来）。
+    """
+    order = [str(x) for x in (cfg.tts.get("order", ["gpt_sovits", "system"]) or [])]
+    wanted = str(cfg.tts.get("backend", "auto") or "auto")
     if wanted == "auto":
-        candidates = order
+        chain = order or ["gpt_sovits"]
     else:
-        candidates = [wanted] + [x for x in order if x != wanted]
+        chain = [wanted] + [x for x in order if x != wanted]
+    if not allow_fallback:
+        return chain[:1]
+    candidates = list(chain)
+    # 兜底后端：config.yaml 的 order 只写了主后端时也保证 SAPI5 能救场
+    # （tts.allow_system_fallback: false 可显式关闭）
+    if bool(cfg.tts.get("allow_system_fallback", True)):
+        if SystemTTS.name not in candidates:
+            candidates.append(SystemTTS.name)
+    return candidates
+
+
+def create_tts(cfg, allow_fallback: bool = True) -> TTSBackend:
+    """按配置选择可用的 TTS 后端。找不到可用后端时抛出 RuntimeError。"""
+    candidates = candidate_names(cfg, allow_fallback=allow_fallback)
 
     errors = []
     for name in candidates:
@@ -65,4 +83,4 @@ def create_tts(cfg) -> TTSBackend:
     raise RuntimeError(
         "没有可用的 TTS 后端。GPT-SoVITS 冷启动约需 1 分钟，就绪后会自动切换；"
         "也可以把 config.yaml 的 tts.backend 改为 system 使用 Windows 系统语音兜底。"
-        "详情：" + "; ".join(errors))
+        "已尝试：" + "、".join(candidates) + "。详情：" + "; ".join(errors))

@@ -45,7 +45,7 @@ from agent.persona import (
     set_active_persona,
 )
 from agent.search import BaiduSearchClient
-from agent.services import ServiceManager
+from agent.services import ServiceManager, gsv_expected_to_start
 from agent.tts.factory import create_backend, create_tts, probe_backends
 from gui.chat_window import ChatWindow
 from gui.first_run import FirstRunDialog
@@ -122,6 +122,162 @@ class TTSWorker(QRunnable):
                 pass
 
 
+class Live2DWindowWorker(QRunnable):
+    """后台执行 Live2D 窗口控制。
+
+    ensure_running() 会忙等最多 30 秒（还可能顺带拉起桌宠进程），绝不能在 GUI 线程跑。
+    """
+
+    def __init__(self, client, action: str):
+        super().__init__()
+        self.client = client
+        self.action = action
+        self.signals = WorkerSignals()
+
+    def run(self):
+        try:
+            if not self.client.ensure_running():
+                self.signals.error.emit(
+                    "Live2D 未就绪：请确认 Nori-Desktop-Pet 已构建且控制服务可访问")
+                return
+            self.client.control_window(self.action)
+            self.signals.result.emit(self.action)
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
+class Live2DCallWorker(QRunnable):
+    """后台执行一次 Live2D HTTP 调用（本地服务无响应时不会卡住界面）。"""
+
+    def __init__(self, fn, *args):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.signals = WorkerSignals()
+
+    def run(self):
+        try:
+            self.fn(*self.args)
+            self.signals.result.emit(True)
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
+class ServiceActionWorker(QRunnable):
+    """后台执行服务启停：内部会跑 tasklist / PowerShell（单次最长 8~12 秒）。"""
+
+    def __init__(self, services, action: str, skip_live2d: bool):
+        super().__init__()
+        self.services = services
+        self.action = action
+        self.skip_live2d = skip_live2d
+        self.signals = WorkerSignals()
+
+    def run(self):
+        try:
+            if self.action == "start_heart":
+                ok = self.services.start_heart(skip_live2d=self.skip_live2d)
+            elif self.action == "stop_heart":
+                ok = self.services.stop_heart()
+            elif self.action == "start_gsv":
+                ok = self.services.start_gpt_sovits()
+            elif self.action == "stop_gsv":
+                ok = self.services.stop_gpt_sovits()
+            else:
+                self.signals.error.emit(f"未知服务操作：{self.action}")
+                return
+            self.signals.result.emit((self.action, bool(ok)))
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
+class ShutdownWorker(QRunnable):
+    """后台停止后台服务与 Live2D：退出时不再让界面假死十几秒。"""
+
+    def __init__(self, services, live2d):
+        super().__init__()
+        self.services = services
+        self.live2d = live2d
+        self.signals = WorkerSignals()
+
+    def run(self):
+        try:
+            self.services.stop_heart()
+        except Exception as e:
+            logging.warning("退出时停止 Heart 失败：%s", e)
+        try:
+            self.services.stop_gpt_sovits()
+        except Exception as e:
+            logging.warning("退出时停止 GPT-SoVITS 失败：%s", e)
+        if self.live2d:
+            try:
+                self.live2d.shutdown()
+            except Exception as e:
+                logging.warning("退出时关闭 Live2D 失败：%s", e)
+        try:
+            self.signals.result.emit(True)
+        except RuntimeError:
+            pass
+
+
+class LLMFetchModelsWorker(QRunnable):
+    """后台拉取模型列表（网络请求最长 30 秒，别放在 GUI 线程）。"""
+
+    def __init__(self, api_key: str, base_url: str, timeout: float = 30.0):
+        super().__init__()
+        self.api_key = api_key
+        self.base_url = base_url
+        self.timeout = timeout
+        self.signals = WorkerSignals()
+
+    def run(self):
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=self.api_key or "not-needed",
+                            base_url=self.base_url, timeout=self.timeout)
+            raw_models = client.models.list().data
+            ids: set[str] = set()
+            for m in raw_models:
+                if isinstance(m, str):
+                    ids.add(m)
+                elif (m_id := getattr(m, "id", None)):
+                    ids.add(str(m_id))
+            self.signals.result.emit(sorted(ids))
+        except Exception as e:
+            self.signals.error.emit(str(e))
+
+
+class LipSyncPusher(threading.Thread):
+    """后台按帧向 Live2D 推送口型电平。
+
+    以前用 QTimer 在主线程每 60ms 发一次 HTTP：本地服务一旦无响应，每个 tick
+    会阻塞最多 5 秒（timeout），界面跟着僵住。改成后台线程后主线程只管开关。
+    """
+
+    def __init__(self, client, interval: float = 0.06):
+        super().__init__(daemon=True, name="lip-sync")
+        self.client = client
+        self.interval = interval
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        counter = 0
+        while not self._stop_event.is_set():
+            counter += 1
+            phase = counter * 0.55
+            # 模拟语音包络：基础开度 + 起伏，让嘴型看起来像在说话
+            level = 0.35 + 0.45 * abs(math.sin(phase)) + 0.12 * math.sin(phase * 2.7)
+            level = max(0.0, min(1.0, level))
+            try:
+                self.client.audio_level(level)
+            except Exception:
+                pass
+            self._stop_event.wait(self.interval)
+
+
 class ServiceStatusWorker(QRunnable):
     """后台刷新 Heart / GPT-SoVITS 状态，避免在主线程执行 tasklist/HTTP。"""
 
@@ -185,6 +341,13 @@ class AppController(QObject):
         self._service_status_busy = False
         self._tts_probe_busy = False
         self._tts_busy = False
+        self._tts_probe_fail = 0        # 首选后端连续探测失败次数（用于兜底切换）
+        self._tts_retry_timer: QTimer | None = None
+        self._lip_pusher: LipSyncPusher | None = None
+        self._quitting = False
+        self._service_action_busy = False
+        self._last_service_status: dict = {}
+        self._fetch_models_busy = False
         self.current_conversation_id: int | None = None
         self._progress = progress or (lambda value, text: None)
 
@@ -215,7 +378,9 @@ class AppController(QObject):
         self.tts_name = "无"
         _stage(38, "正在加载 Nori 语音引擎…")
         try:
-            self.tts = create_tts(cfg)
+            # GPT-SoVITS 已配置且能启动时（冷启动中）先不兜底：消息排队等 Nori 音色，
+            # 避免冷启动期间先用系统音色念出来；长时间起不来再由 _on_tts_retry 切兜底。
+            self.tts = create_tts(cfg, allow_fallback=not gsv_expected_to_start(cfg))
             self.tts_name = self.tts.name
         except Exception as e:
             logging.warning("TTS 不可用：%s", e)
@@ -462,6 +627,8 @@ class AppController(QObject):
 
     def _on_service_status_result(self, st):
         self._service_status_busy = False
+        if isinstance(st, dict):
+            self._last_service_status = st
         try:
             self.chat.set_service_status("heart", bool(st.get("heart", False)))
             self.chat.set_service_status("gpt_sovits", bool(st.get("gpt_sovits", False)))
@@ -494,12 +661,14 @@ class AppController(QObject):
         try:
             preferred, ok, backend = payload
             if not ok or backend is None:
+                self._maybe_activate_fallback(preferred)
                 return
             wanted = str(self.cfg.tts.get("backend", "auto"))
             if wanted != "auto" and preferred != wanted:
                 return
             self.tts = backend
             self.tts_name = preferred
+            self._tts_probe_fail = 0
             self._apply_speed(self.chat.speed_slider.value() / 100.0)
             self.chat.append_system(f"✅ Nori 语音引擎已就绪，自动切换：{preferred}")
             self._refresh_service_status()
@@ -511,6 +680,34 @@ class AppController(QObject):
     def _on_tts_probe_error(self, err):
         self._tts_probe_busy = False
         logging.warning("TTS 后端探测失败：%s", err)
+
+    # 冷启动宽限期：首选后端连续探测失败这么多轮（每轮 5 秒）后启用兜底语音
+    _TTS_FALLBACK_AFTER = 18
+
+    def _maybe_activate_fallback(self, preferred: str):
+        """首选后端长时间不就绪（例如 GPT-SoVITS 一直起不来）时切到兜底后端。
+
+        没有这一步时，消息会永远停在排队队列里：界面显示「冷启动中」，却永远没有声音。
+        """
+        self._tts_probe_fail += 1
+        if not self._tts_pending or self._tts_probe_fail < self._TTS_FALLBACK_AFTER:
+            return
+        self._tts_probe_fail = 0
+        try:
+            backend = create_tts(self.cfg)          # 允许 system 兜底
+        except Exception as e:
+            logging.warning("兜底 TTS 也不可用：%s", e)
+            return
+        self.tts = backend
+        self.tts_name = backend.name
+        self._apply_speed(self.chat.speed_slider.value() / 100.0)
+        if backend.name == preferred:
+            self.chat.append_system(f"✅ Nori 语音引擎已就绪：{self.tts_name}")
+        else:
+            self.chat.append_system(
+                f"⚠ Nori 音色（{preferred}）暂不可用，先用兜底语音朗读：{self.tts_name}")
+        self._refresh_status_pill()
+        self._flush_tts_pending()
 
     def _vision_mcp_available(self) -> bool:
         """判断是否已通过设置界面的 MCP 导入了视觉服务器。"""
@@ -592,10 +789,7 @@ class AppController(QObject):
         self.chat.set_thinking(True)
         # 思考时播放待机动作，避免角色僵硬（模型无该动作时会被安全忽略）
         if self.live2d and self.live2d_ready:
-            try:
-                self.live2d.play_motion("idle")
-            except Exception:
-                pass
+            self._live2d_call(self.live2d.play_motion, "idle")
         worker = SendWorker(self.core, text)
         worker.signals.result.connect(self._on_reply)
         worker.signals.error.connect(self._on_llm_error)
@@ -617,10 +811,7 @@ class AppController(QObject):
         self.chat.set_input_enabled(False)
         self.chat.set_thinking(True)
         if self.live2d and self.live2d_ready:
-            try:
-                self.live2d.play_motion("idle")
-            except Exception:
-                pass
+            self._live2d_call(self.live2d.play_motion, "idle")
         worker = SendWorker(self.core, caption, image_paths=paths)
         worker.signals.result.connect(self._on_reply)
         worker.signals.error.connect(self._on_llm_error)
@@ -674,10 +865,10 @@ class AppController(QObject):
             try:
                 if kind == "expr":
                     mapped = self._map_name("emotion_map", name)
-                    self.live2d.set_expression(mapped)
+                    self._live2d_call(self.live2d.set_expression, mapped)
                 elif kind == "motion":
                     mapped = self._map_name("motion_map", name)
-                    self.live2d.play_motion(mapped)
+                    self._live2d_call(self.live2d.play_motion, mapped)
             except Exception as e:
                 logging.warning("Live2D 指令失败 %s=%s：%s", kind, name, e)
 
@@ -778,42 +969,26 @@ class AppController(QObject):
         self.pool.start(worker)
 
     # ------------------------------------------------------------------ Live2D 嘴型同步
+    def _live2d_call(self, fn, *args):
+        """Live2D 的 HTTP 调用一律丢到后台线程：本地服务没响应时不能拖住界面。"""
+        if fn is None:
+            return
+        self.pool.start(Live2DCallWorker(fn, *args))
+
     def _start_lip_sync(self):
-        """TTS 播放期间向 Live2D 推送模拟音频电平，驱动嘴型动作。"""
+        """TTS 播放期间向 Live2D 推送模拟音频电平，驱动嘴型动作（后台线程）。"""
         if not self.live2d or not self.live2d_ready:
             return
-        self._lip_sync_counter = 0
-        if getattr(self, "_lip_sync_timer", None) is None:
-            self._lip_sync_timer = QTimer(self)
-            self._lip_sync_timer.setInterval(60)
-            self._lip_sync_timer.timeout.connect(self._tick_lip_sync)
-        if not self._lip_sync_timer.isActive():
-            self._lip_sync_timer.start()
-
-    def _tick_lip_sync(self):
-        if not self._tts_busy:
-            self._stop_lip_sync()
-            return
-        self._lip_sync_counter += 1
-        phase = self._lip_sync_counter * 0.55
-        # 模拟语音包络：基础开度 + 起伏，让嘴型看起来像在说话
-        level = 0.35 + 0.45 * abs(math.sin(phase)) + 0.12 * math.sin(phase * 2.7)
-        level = max(0.0, min(1.0, level))
-        if self.live2d:
-            try:
-                self.live2d.audio_level(level)
-            except Exception:
-                pass
+        if self._lip_pusher is None or not self._lip_pusher.is_alive():
+            self._lip_pusher = LipSyncPusher(self.live2d)
+            self._lip_pusher.start()
 
     def _stop_lip_sync(self):
-        timer = getattr(self, "_lip_sync_timer", None)
-        if timer is not None and timer.isActive():
-            timer.stop()
+        if self._lip_pusher is not None:
+            self._lip_pusher.stop()
+            self._lip_pusher = None
         if self.live2d:
-            try:
-                self.live2d.audio_level(0)
-            except Exception:
-                pass
+            self._live2d_call(getattr(self.live2d, "audio_level", None), 0)
 
     def _flush_tts_pending(self):
         if self._tts_busy or not self.tts or not self._tts_pending:
@@ -823,7 +998,7 @@ class AppController(QObject):
 
     def _schedule_tts_retry(self):
         """如果 TTS 还没就绪或有积压，几秒后自动再试一次。"""
-        if getattr(self, "_tts_retry_timer", None) is None:
+        if self._tts_retry_timer is None:
             self._tts_retry_timer = QTimer(self)
             self._tts_retry_timer.setInterval(5000)
             self._tts_retry_timer.timeout.connect(self._on_tts_retry)
@@ -836,7 +1011,7 @@ class AppController(QObject):
                 self._flush_tts_pending()
             else:
                 self._check_preferred_tts()
-        elif not self._tts_busy:
+        elif not self._tts_busy and self._tts_retry_timer is not None:
             self._tts_retry_timer.stop()
 
     @Slot(object)
@@ -849,7 +1024,7 @@ class AppController(QObject):
             except Exception:
                 pass
         self._flush_tts_pending()
-        if not self._tts_pending and not self._tts_busy:
+        if not self._tts_pending and not self._tts_busy and self._tts_retry_timer is not None:
             self._tts_retry_timer.stop()
 
     @Slot(str)
@@ -863,7 +1038,7 @@ class AppController(QObject):
                 pass
         self.chat.append_system(f"⚠ TTS 播放失败：{err}")
         self._flush_tts_pending()
-        if not self._tts_pending and not self._tts_busy:
+        if not self._tts_pending and not self._tts_busy and self._tts_retry_timer is not None:
             self._tts_retry_timer.stop()
 
     # ------------------------------------------------------------------ 快速设置 ----
@@ -915,14 +1090,21 @@ class AppController(QObject):
 
     @Slot()
     def on_tts_status_refresh(self):
+        """刷新状态胶囊。
+
+        服务状态一律走后台线程刷新（tasklist/PowerShell 单次最长 8~12 秒，
+        heart_is_running()/gsv_is_running() 还会同步删除过期 pid 文件），
+        这里只显示最近一次后台刷新的结果。
+        """
         try:
             self._check_preferred_tts()
             self._refresh_service_status()
             self._refresh_status_pill()
+            st = self._last_service_status or {}
             self.chat.append_system(
                 f"状态已刷新：TTS={self.tts_name}，"
-                f"Heart={'运行中' if self.services.heart_is_running() else '未运行'}，"
-                f"GPT-SoVITS={'运行中' if self.services.gsv_is_running() else '未运行'}")
+                f"Heart={'运行中' if st.get('heart') else '未运行（或尚未刷新）'}，"
+                f"GPT-SoVITS={'运行中' if st.get('gpt_sovits') else '未运行（或尚未刷新）'}")
         except Exception as e:
             self.chat.append_system(f"⚠ 刷新状态失败：{e}")
 
@@ -1077,19 +1259,21 @@ class AppController(QObject):
 
     @Slot()
     def on_llm_fetch_models(self):
-        """从当前 OpenAI 兼容提供商拉取模型列表（支持 Ollama）。"""
+        """从当前 OpenAI 兼容提供商拉取模型列表（后台线程，避免最长 30 秒卡界面）。"""
+        if getattr(self, "_fetch_models_busy", False):
+            self.chat.append_system("⏳ 正在获取模型列表，请稍候…")
+            return
+        self._fetch_models_busy = True
+        self.chat.append_system(f"⏳ 正在从 {self.cfg.base_url} 获取模型列表…")
+        worker = LLMFetchModelsWorker(str(self.cfg.api_key or "").strip(), self.cfg.base_url)
+        worker.signals.result.connect(self._on_fetch_models_done)
+        worker.signals.error.connect(self._on_fetch_models_error)
+        self.pool.start(worker)
+
+    @Slot(object)
+    def _on_fetch_models_done(self, models):
+        self._fetch_models_busy = False
         try:
-            from openai import OpenAI
-            api_key = str(self.cfg.api_key or "").strip() or "not-needed"
-            client = OpenAI(api_key=api_key, base_url=self.cfg.base_url, timeout=30)
-            raw_models = client.models.list().data
-            model_ids: set[str] = set()
-            for m in raw_models:
-                if isinstance(m, str):
-                    model_ids.add(m)
-                elif (m_id := getattr(m, "id", None)):
-                    model_ids.add(str(m_id))
-            models = sorted(model_ids)
             if not models:
                 self.chat.append_system("⚠ 提供商返回了空模型列表")
                 return
@@ -1111,7 +1295,12 @@ class AppController(QObject):
             combo.blockSignals(False)
             self.chat.append_system(f"✅ 已从 {self.cfg.base_url} 获取 {len(models)} 个模型")
         except Exception as e:
-            self.chat.append_system(f"⚠ 获取模型列表失败：{e}")
+            self.chat.append_system(f"⚠ 更新模型列表失败：{e}")
+
+    @Slot(str)
+    def _on_fetch_models_error(self, err: str):
+        self._fetch_models_busy = False
+        self.chat.append_system(f"⚠ 获取模型列表失败：{err}")
 
     @Slot(str)
     def on_search_config(self, api_key: str):
@@ -1291,23 +1480,29 @@ class AppController(QObject):
 
     @Slot(str)
     def on_live2d_window(self, action: str):
-        """显示/隐藏/切换原生 Live2D 窗口。"""
+        """显示/隐藏/切换原生 Live2D 窗口（连接与控制在后台线程执行）。"""
         if not self.live2d:
             self.chat.append_system("未启用 Live2D")
             return
         if not self.live2d_ready:
-            self.live2d_ready = self.live2d.ensure_running()
-        if not self.live2d_ready:
-            self.chat.append_system("⚠ Live2D 未连接，无法控制窗口")
-            return
-        try:
-            self.live2d.control_window(action)
-            label = {"show": "已显示", "hide": "已隐藏", "toggle": "已切换"}.get(action, action)
-            self.chat.append_system(f"Live2D 窗口：{label}")
-            if action in ("show", "toggle"):
-                self._refresh_live2d_models(announce=False)
-        except Exception as e:
-            self.chat.append_system(f"Live2D 窗口控制失败：{e}")
+            self.chat.append_system("⏳ Live2D 还在连接，正在后台尝试启动…")
+        worker = Live2DWindowWorker(self.live2d, action)
+        worker.signals.result.connect(self._on_live2d_window_done)
+        worker.signals.error.connect(self._on_live2d_window_error)
+        self.pool.start(worker)
+
+    @Slot(object)
+    def _on_live2d_window_done(self, action):
+        self.live2d_ready = True
+        label = {"show": "已显示", "hide": "已隐藏", "toggle": "已切换"}.get(action, action)
+        self.chat.append_system(f"Live2D 窗口：{label}")
+        if action in ("show", "toggle"):
+            self._refresh_live2d_models(announce=False)
+        self._refresh_status_pill()
+
+    @Slot(str)
+    def _on_live2d_window_error(self, err: str):
+        self.chat.append_system(f"⚠ Live2D 窗口控制失败：{err}")
 
     @Slot()
     def on_save_settings(self):
@@ -1388,6 +1583,29 @@ class AppController(QObject):
         self._refresh_history_page(persona)
         if load_history:
             self._load_conversation_messages(main_id)
+
+    def _switch_active_persona(self, persona: str, reason: str = "") -> bool:
+        """把生效人格切到指定人格（会话的归属人格）。
+
+        历史与记忆按“人格 + 会话”隔离：**写库用生效人格、读库用会话人格**
+        （agent/core.py 与 memory.get_recent_messages），两者不一致时消息会写进去
+        却读不出来（表现为“聊天记录消失”）。所以打开/新建别人格的会话前先切人格。
+        """
+        persona = str(persona or "").strip()
+        if not persona:
+            return False
+        try:
+            if persona == active_persona_name(self.cfg):
+                return False
+            set_active_persona(self.cfg, persona)
+        except Exception as e:
+            self.chat.append_system(f"⚠ 无法切换到人格“{persona}”：{e}")
+            return False
+        self._refresh_persona_page()
+        self._setup_active_persona_workspace(load_history=False)
+        if reason:
+            self.chat.append_system(f"🔄 已切换到人格“{persona}”（{reason}）")
+        return True
 
     def _load_conversation_messages(self, conv_id: int):
         conv = self.memory.get_conversation(conv_id)
@@ -1470,6 +1688,9 @@ class AppController(QObject):
         try:
             active = delete_persona(self.cfg, name)
             self._refresh_persona_page()
+            # 删除当前人格时生效人格会被切回默认：会话指针也必须跟着重建，
+            # 否则后续消息会写进已删人格的会话（历史里看不到）
+            self._setup_active_persona_workspace(load_history=True)
             self.chat.append_system(f"🗑 已删除人格“{name}”，当前人格：{active}")
         except Exception as e:
             self.chat.append_system(f"⚠ 删除人格失败：{e}")
@@ -1490,6 +1711,8 @@ class AppController(QObject):
             if not conv:
                 self.chat.append_system("⚠ 会话不存在")
                 return
+            # 会话属于某个人格：先切到该人格，避免消息按生效人格写进别人格的会话
+            self._switch_active_persona(conv.get("persona", ""), reason="该会话所属人格")
             self.current_conversation_id = int(conv_id)
             self.core.current_conversation_id = int(conv_id)
             self._load_conversation_messages(int(conv_id))
@@ -1502,6 +1725,7 @@ class AppController(QObject):
     def on_conversation_new(self, persona: str):
         try:
             conv_id = self.memory.create_conversation(persona)
+            self._switch_active_persona(persona, reason="新会话所属人格")
             self.current_conversation_id = conv_id
             self.core.current_conversation_id = conv_id
             self._load_conversation_messages(conv_id)
@@ -1698,34 +1922,47 @@ class AppController(QObject):
     # ------------------------------------------------------------------ 服务 ----
     @Slot(str)
     def on_service_action(self, action: str):
-        try:
-            if action == "start_heart":
-                ok = self.services.start_heart(skip_live2d=not self.enable_pet)
-                self.chat.append_system("✅ Heart 已启动（无窗口）" if ok else "⚠ Heart 启动失败，请看控制台日志")
-            elif action == "stop_heart":
-                ok = self.services.stop_heart()
-                self.chat.append_system("■ Heart 已停止" if ok else "⚠ Heart 停止失败")
-            elif action == "start_gsv":
-                ok = self.services.start_gpt_sovits()
+        """服务启停（tasklist/PowerShell 单次最长 8~12 秒，放后台线程做）。"""
+        if self._service_action_busy:
+            self.chat.append_system("⏳ 上一个服务操作还没结束，稍等一下…")
+            return
+        self._service_action_busy = True
+        self.chat.append_system(f"⏳ 正在执行：{action} …")
+        worker = ServiceActionWorker(self.services, action, skip_live2d=not self.enable_pet)
+        worker.signals.result.connect(self._on_service_action_done)
+        worker.signals.error.connect(self._on_service_action_error)
+        self.pool.start(worker)
+
+    @Slot(object)
+    def _on_service_action_done(self, payload):
+        self._service_action_busy = False
+        action, ok = payload
+        if action == "start_heart":
+            self.chat.append_system("✅ Heart 已启动（无窗口）" if ok else "⚠ Heart 启动失败，请看控制台日志")
+        elif action == "stop_heart":
+            self.chat.append_system("■ Heart 已停止" if ok else "⚠ Heart 停止失败")
+        elif action == "start_gsv":
+            self.chat.append_system(
+                "✅ GPT-SoVITS 正在启动，约 1 分钟后就绪（Nori 音色）" if ok
+                else "⚠ GPT-SoVITS 启动失败，请看控制台日志")
+        elif action == "stop_gsv":
+            if ok:
                 self.chat.append_system(
-                    "✅ GPT-SoVITS 正在启动，约 1 分钟后就绪（Nori 音色）" if ok
-                    else "⚠ GPT-SoVITS 启动失败，请看控制台日志")
-            elif action == "stop_gsv":
-                ok = self.services.stop_gpt_sovits()
-                if ok:
-                    self.chat.append_system(
-                        "■ GPT-SoVITS 已停止；语音引擎暂停，消息会排队，重新启动后自动恢复")
-                    self.tts = None
-                    self.tts_name = "无"
-                else:
-                    self.chat.append_system(
-                        "⚠ 该 GPT-SoVITS 不是本面板启动的，请到日志目录关闭外部进程")
+                    "■ GPT-SoVITS 已停止；语音引擎暂停，消息会排队，重新启动后自动恢复")
+                self.tts = None
+                self.tts_name = "无"
             else:
-                return
-        except Exception as e:
-            self.chat.append_system(f"⚠ 服务操作失败：{e}")
+                self.chat.append_system(
+                    "⚠ 该 GPT-SoVITS 不是本面板启动的，请到日志目录关闭外部进程")
         self._refresh_service_status()
+        self._refresh_status_pill()
         self.chat._refresh_console()
+
+    @Slot(str)
+    def _on_service_action_error(self, err: str):
+        self._service_action_busy = False
+        self.chat.append_system(f"⚠ 服务操作失败：{err}")
+        self._refresh_service_status()
 
     # ------------------------------------------------------------------ Live2D 模型 ----
     def _refresh_live2d_models(self, announce: bool = True):
@@ -1792,23 +2029,20 @@ class AppController(QObject):
     # ------------------------------------------------------------------ 完全退出 ----
     @Slot()
     def on_quit_requested(self):
-        """完全退出：停止后台服务、关闭 Live2D 应用并退出本程序。"""
+        """完全退出：后台停服务 + 关 Live2D，然后退出（不阻塞界面）。"""
+        if self._quitting:
+            return
+        self._quitting = True
         logging.info("用户请求完全退出：停止所有后台服务")
         self._full_quit = True
-        try:
-            self.services.stop_heart()
-        except Exception as e:
-            logging.warning("退出时停止 Heart 失败：%s", e)
-        try:
-            self.services.stop_gpt_sovits()
-        except Exception as e:
-            logging.warning("退出时停止 GPT-SoVITS 失败：%s", e)
-        if self.live2d:
-            try:
-                self.live2d.shutdown()
-            except Exception as e:
-                logging.warning("退出时关闭 Live2D 失败：%s", e)
-        QTimer.singleShot(150, self.app.quit)
+        if self._lip_pusher is not None:
+            self._lip_pusher.stop()
+            self._lip_pusher = None
+        worker = ShutdownWorker(self.services, self.live2d)
+        worker.signals.result.connect(lambda _: self.app.quit())
+        self.pool.start(worker)
+        # 兜底：后台停服务卡住（taskkill/PowerShell 超时）也不能让程序退不掉
+        QTimer.singleShot(12000, self.app.quit)
 
     # ------------------------------------------------------------------
     def show(self):
@@ -1867,13 +2101,21 @@ def main():
         raise
 
     def _on_quit():
+        # 先等在飞的发送/整合任务收尾，避免“先关库、后台线程还在写”把最后一轮静默丢掉
+        try:
+            controller.pool.clear()            # 丢掉还没排上的任务
+            controller.pool.waitForDone(3000)  # 最多等 3 秒，卡住也不拖住退出
+        except Exception:
+            pass
         try:
             controller.memory.close()
         except Exception:
             pass
         try:
-            # 完全退出按钮已停过服务；普通关闭按配置决定是否停 heart
-            if controller._full_quit or cfg.heart.get("stop_with_gui", False):
+            # 完全退出（点 ×）时上面的 ShutdownWorker 已经在后台停过 Heart，
+            # 这里不能再停一遍：heart_is_running()/stop_heart() 会跑 tasklist + PowerShell
+            # 全进程扫描（单次最长 8~12 秒），白白拖慢退出。
+            if not controller._full_quit and cfg.heart.get("stop_with_gui", False):
                 controller.services.stop_heart()
         except Exception:
             pass

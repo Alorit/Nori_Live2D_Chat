@@ -2,6 +2,36 @@
 
 所有对外发布的版本更新记录，最新版本在最上面。
 
+## v0.2.2（2026-09-13）
+
+### 修复
+
+- **GPT-SoVITS 起不来导致 Nori 完全没有声音**：推理配置 `GPT_SoVITS/configs/tts_infer.yaml` 里的权重路径在项目目录改名 / 搬家后仍是旧路径，服务启动即 `FileNotFoundError` 退出，界面永远停在「⏳ 冷启动中」。现在启动前会自检权重路径是否有效，失效时自动用当前语音包重写（`agent/services.py` 新增 `repair_gsv_weights()`）
+- **Windows SAPI5 兜底永远不可达**：`tts.order` 只列了主后端时 `create_tts()` 根本不会尝试 system 后端。现在候选链保证带上 system（`tts.allow_system_fallback: false` 可关），首选后端约 90 秒仍不就绪时自动回落并朗读排队消息；冷启动期间仍保持「排队等 Nori 音色」的原有体验
+- **应用语音包会把参考文本写空**：语音包目录没有 `prompt.txt` / `meta.json` 时，`prompt_text` 被写成空串并覆盖 `config.yaml` 里的有效值，GPT-SoVITS 退回「无参考文本」模式，音色与韵律明显劣化。现在缺参考文本时保留已有值，并支持语音包 `meta.json` 的 `prompt_lang`
+- **长期记忆 / 行为规则 / 滚动摘要 / 当前时间完全不注入**：人格 `.md` 里一个占位符都没写时（成品人格很常见），这些动态上下文一律不进 System Prompt，记忆功能对模型等于不存在。现在会自动拼成一段附在末尾，可用 `memory.inject_context: false` 关掉
+- **Heart 可能无限唤醒、持续消耗额度**：模型返回 `next_wake_minutes: null` 或带单位文本时 `int()` 抛异常，`next_wake_at` 不推进，于是每个轮询间隔（默认 20 秒）都重调一次 LLM。现已兜底到默认值，并且私人思考返回非 JSON 对象时只跳过本轮
+- **跨人格会话的「聊天记录消失」**：打开 / 新建别人格的会话、或删除当前人格后，消息按生效人格入库、却按会话人格读取，重开会话显示为空。现在打开 / 新建会话会先切到该会话所属人格，删除人格后自动重建会话指针
+- **朗读结束必抛 `AttributeError`**：`_tts_retry_timer` 未初始化就被 `.stop()`（`run.bat` 用 pythonw，异常被完全吞掉）
+
+### 优化
+
+- **界面不再被后台操作卡死**（主线程阻塞全部移出）：Live2D 窗口控制（原最坏忙等 30 秒）、服务启停（tasklist / PowerShell 单次 8~12 秒）、「🔄 获取模型列表」（30 秒网络请求）、口型同步（原每 60ms 一次 HTTP）、完全退出（改为后台停服务 + 12 秒硬顶）
+- 退出时先等在飞的发送 / 整合任务收尾再关数据库，避免最后一轮对话静默丢失；点 × 完全退出时不再重复停一遍 Heart（省掉一次全进程扫描）
+- 人格 / 会话相关的状态提示更明确：打开别人格会话会提示「已切换到人格 X」
+
+### 变更
+
+- **README 只保留最新版本的更新内容**，历史更新统一记录在本文件
+- Release 完整包名改为通配写法 `Live2D_agent_byAlorit_v*.zip`，不再随版本号硬编码
+
+### 文档
+
+- `config.yaml` 模板新增 `tts.allow_system_fallback`（默认 true）与 `memory.inject_context`（默认 true）两项说明
+- README 补充「人格没写占位符时会自动附加动态上下文」的说明
+
+---
+
 ## v0.2.1（2026-09-07）
 
 ### 新增

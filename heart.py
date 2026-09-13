@@ -165,7 +165,15 @@ class NoriHeart:
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.choices[0].message.content or "{}"
-        return json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            logger.warning("私人思考返回的不是合法 JSON（%s），本轮跳过", e)
+            return {}
+        if not isinstance(data, dict):
+            logger.warning("私人思考返回的不是 JSON 对象，本轮跳过")
+            return {}
+        return data
 
     # ------------------------------------------------------------------
     def _execute(self, decision: dict):
@@ -238,7 +246,15 @@ class NoriHeart:
         except Exception as e:
             logger.warning("heart 执行动作失败：%s", e)
 
-        minutes = int(decision.get("next_wake_minutes", self.h.get("default_wake_minutes", 15)))
+        # 模型可能返回 null / "30分钟" / 缺字段：任何取不到整数的情况都必须落到默认值，
+        # 否则异常会越过 tick()（next_wake_at 不推进）→ 每个轮询间隔都重调一次 LLM
+        default_minutes = int(self.h.get("default_wake_minutes", 15))
+        try:
+            minutes = int(decision.get("next_wake_minutes", default_minutes))
+        except (TypeError, ValueError):
+            logger.warning("next_wake_minutes 不是整数（%r），改用默认 %d 分钟",
+                           decision.get("next_wake_minutes"), default_minutes)
+            minutes = default_minutes
         minutes = max(int(self.h.get("min_wake_minutes", 2)),
                       min(int(self.h.get("max_wake_minutes", 120)), minutes))
         self.state["last_wake_at"] = now

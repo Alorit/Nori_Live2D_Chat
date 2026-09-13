@@ -150,6 +150,27 @@ def prompt_text_for(voice_path: Path) -> str:
     return ""
 
 
+def prompt_lang_for(voice_path: Path) -> str:
+    """读取语音包的参考语言（meta.json 的 prompt_lang，可选）。"""
+    m = voice_path / "meta.json"
+    if m.is_file():
+        try:
+            data = json.loads(m.read_text(encoding="utf-8"))
+            lang = str(data.get("prompt_lang", "") or "").strip()
+            if lang:
+                return lang
+        except Exception:
+            pass
+    return ""
+
+
+def voice_pack_weights(voice_path: Path) -> tuple[Path | None, Path | None]:
+    """返回语音包的 (SoVITS 权重 *.ckpt, GPT 权重 *.pth)。"""
+    s1 = next(iter(sorted(voice_path.glob("*.ckpt"))), None) if voice_path.is_dir() else None
+    s2 = next(iter(sorted(voice_path.glob("*.pth"))), None) if voice_path.is_dir() else None
+    return s1, s2
+
+
 def apply_voice_to_config(cfg, name: str) -> dict:
     """把语音包应用到当前配置：保存 overrides，并更新 GPT-SoVITS 推理 yaml。"""
     voice_path = voices_dir(cfg.root) / safe_voice_name(name)
@@ -157,17 +178,23 @@ def apply_voice_to_config(cfg, name: str) -> dict:
     if not ref:
         raise ValueError(f"语音包不存在或缺少参考音频：{name}")
 
-    prompt_text = prompt_text_for(voice_path)
+    # 语音包没带参考文本时，保留配置里已有的值：
+    # prompt_text 为空会让 GPT-SoVITS 退回“无参考文本”模式，音色与韵律明显劣化。
+    current = cfg.tts.get("gpt_sovits", {})
+    current = current if isinstance(current, dict) else {}
+    prompt_text = (prompt_text_for(voice_path)
+                   or str(current.get("prompt_text", "") or "").strip())
+    prompt_lang = (prompt_lang_for(voice_path)
+                   or str(current.get("prompt_lang", "") or "").strip() or "zh")
     gpt_cfg = {
         "ref_audio_path": str(ref),
         "prompt_text": prompt_text,
-        "prompt_lang": "zh",
+        "prompt_lang": prompt_lang,
     }
     cfg.set_runtime("tts", "gpt_sovits", gpt_cfg)
     cfg.save_overrides({"tts": {"gpt_sovits": gpt_cfg}})
 
-    s1 = next(voice_path.glob("*.ckpt"), None)
-    s2 = next(voice_path.glob("*.pth"), None)
+    s1, s2 = voice_pack_weights(voice_path)
     runtime_dir = str(cfg.tts.get("gpt_sovits", {}).get("runtime_dir", "") or "")
     updated_yaml = None
     if runtime_dir and s1 and s2:

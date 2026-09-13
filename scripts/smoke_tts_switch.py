@@ -34,6 +34,12 @@ for i in range(180):
 print("gsv ready after ~", i + 1, "s")
 
 ctrl._check_preferred_tts()
+# 探测在后台线程里跑，结果通过信号回到主线程：必须让事件循环转起来才会生效
+for _ in range(60):
+    app.processEvents()
+    if ctrl.tts_name == "gpt_sovits":
+        break
+    time.sleep(0.25)
 print("tts after probe:", ctrl.tts_name)
 assert ctrl.tts_name == "gpt_sovits"
 print("stop:", ctrl.services.stop_gpt_sovits())
