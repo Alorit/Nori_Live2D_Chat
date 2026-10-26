@@ -8,6 +8,8 @@ SOURCES = {
     "agent": "agent.log",
     "heart": "heart.log",
     "gpt_sovits": "gpt_sovits.log",
+    # 桌宠进程的 stdout/stderr 由 agent/live2d_native.py 重定向到这个文件；
+    # 之前指向 live2d_mcp.log（旧 MCP 应用留下的产物），等于永远看不到内容。
     "live2d": "live2d_native.log",
     "train": "nori_train.log",
 }
@@ -41,6 +43,7 @@ def _ts_prefix(line: str):
 
 def collect_logs(root: Path, source: str = "全部", max_lines: int = 500,
                  filter_text: str = "", level: str = "全部") -> str:
+    root = Path(root)  # 允许直接传项目根目录字符串
     logs_dir = root / "data" / "logs"
     names = list(SOURCES.items()) if source == "全部" else \
         [(source, SOURCES.get(source, ""))]

@@ -203,6 +203,8 @@ class AgentCore:
                 if not m.get("content"):
                     m["content"] = "[用户发过一张图片]"
             m.pop("image_paths", None)
+            # ts 只给 GUI 回放历史用，不能混进 LLM 请求体（严格实现会因未知字段报错）
+            m.pop("ts", None)
         if use_compression:
             history = self.compressor.history_for_llm(history, persona)
 

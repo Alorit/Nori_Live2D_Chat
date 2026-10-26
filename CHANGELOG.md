@@ -2,6 +2,58 @@
 
 所有对外发布的版本更新记录，最新版本在最上面。
 
+## v0.3.0_bata（2026-10-26）：自主性升级
+
+把 Nori 从「跟随鼠标的立绘」改成「有自己作息、会自己动、偶尔自言自语」的桌宠。方案与评估见 `docs/autonomy-plan.md`。
+
+### 新增
+
+- **秒级反射层 `agent/pet_director.py`（新文件，约 508 行）**：不花 token 的导演。管理 body lock（优先级：说话 100 > 意图 60 > 微动作 20，同一时刻只执行一个，并给动作一个最短驻留时间，避免 1 Hz 抖动）、动作/表情白名单（只发模型真有的名字，发错一次就拉黑）、微动作权重表（早上 / 白天 / 傍晚 / 深夜四档不同偏好）、泊松抖动间隔（不是固定节拍，看起来才不像机器）、作息与睡眠（`quiet_hours` 到点自动切 `sleep_Loop`）、说话预算与冷却（默认每小时 3 句、两句至少隔 45 秒）
+- **主人状态感知 `agent/presence.py`（新文件）**：纯本地 Win32，`GetLastInputInfo` 取空闲秒数、`GetForegroundWindow` 取前台应用进程名，**不联网、不截图、不读窗口标题**（`use_window_title: false`）。主人离开 5 分钟她自己去睡，回来时「伸个懒腰」；非 Windows 平台自动降级为空
+- **内心 OS 可视化**：heart 把想法写进 `data/heart_events.jsonl`，GUI 按字节偏移增量轮询（文件被截断会自愈），聊天窗里以居中灰色小字气泡显示「💭（情绪）想法」，不打断对话流。`autonomy.inner_os: false` 可关
+- **情绪状态机**：`valence / arousal / energy` 三个维度，会随时间衰减回基线；情绪影响微动作权重（低落时少 `wakuwaku`），也会写进 prompt 影响台词
+- **人格摘要缓存**：把 8.8k 字符的人格 md 压成约 400 字摘要供自主回合使用，按内容哈希缓存（`data/heart_persona_digest.json`），人格没改就不再花钱
+- `config.yaml` 新增 `autonomy:` 段（约 20 项可调参数，每项都有注释）
+
+### 修复（自主性）
+
+- **自主回合的动作/表情几乎全部失效**：`persona.emotion_map` 里 7 个中文情绪全部指向旧 `nori` 模型的表情（「爱心眼」「圈圈眼」「黑化」…），arg-nori 里根本没有，7/7 解析失败；`motion_map` 的「挥手」「鞠躬」也不存在（2/5 失败）。全部改成 arg-nori 的真实名字（`happy / troubled / surprised / shy / angry / serious / doubt`，`wakuwaku / nod`）
+- **heart 的唤醒间隔被浪费**：原来每次醒来只发一个动作就睡回去，一次对话都没有；现在每次唤醒产出一份**带时间轴的剧本**（`at` 秒 + 动作/表情/台词），交给导演在接下来几分钟里陆续执行
+- **自主回合的 prompt 太重**：每次唤醒都塞完整人格（约 5.2k tokens 输入）。改用人格摘要 + 精简上下文后，实测**输入 853 tokens / 输出 153 tokens**，一次唤醒约 2 秒；人格摘要本身只在人格改动后重算一次
+- **`reasoning` 吃光 `max_tokens` 导致摘要为空**：`deepseek-flash` 是推理型，2000 的输出上限会被思考过程吞掉，`finish_reason=length` 且 `content` 为空。摘要上限提到 8000，思考上限提到 3000，并在首次失败后自动翻倍重试
+- 模型配置里的 `deepseek-v4-flash` 在这个 API 上不存在（404），改为 `deepseek-flash`，`api_model_combo` 的预置项同步换成 `deepseek-flash / deepseek-v4-pro`
+
+### 优化（自主性）
+
+- 聊天窗新增 `append_thought()`：内心 OS 用独立的 `#InnerOS` 样式（居中、灰字、虚线上边框），不参与 `append_system` 的日志流
+
+### 同一版本内的 GUI 修复与打磨（2026-10-25 批）
+
+本轮是「轻量修 bug + 局部打磨」，不改变整体风格与配色，与自主性改动一起并入 v0.3.0_bata。
+
+#### 修复
+
+- **设置页的子页签栏会跟着内容一起滚走，其它页的底部按钮被顶到视口外**：原来把整个内层 `QTabWidget` 塞进一个 `QScrollArea`，所有页共用最高页（基础设置）的高度 —— 于是「聊天记录」页底部的 `打开到聊天 / 重命名 / 删除`、「人格」页的 `保存 / 恢复默认`、「记忆」页的「行为规则」区，不滚到最下面根本看不见。现在每个设置页各包一层滚动区，页签栏固定在顶部，切换页签各自保留滚动位置
+- **小屏幕下窗口自适应从来没生效过**：`_fit_to_screen()` 里调用的是未定义的 `QApplication_primary_screen()`（它只存在于 `gui/splash.py`），`NameError` 被 `except: pass` 静默吞掉。改用 `QApplication.primaryScreen()`
+- **回放历史记录时所有消息都显示成「现在」**：气泡时间戳写死 `datetime.now()`。现在按消息自身的 `ts` 显示，当天只显示 `HH:MM`，跨天显示 `MM-DD HH:MM`，跨年显示日期
+- **把界面字号调到 13px 以外的值后，输入框字号不变**：QSS 里 `QLineEdit#MessageInput` 也写了一处 `font-size: 13px`，而 `_style_for_font` 只替换第一处。去掉输入框里的写死字号，改为继承窗口基础字号
+- **宠物大小和滑块偶发对不上**：`set_current_settings()` 把配置值钳到 `3.0`，但滑块范围是 `0.5~2.0`，超出部分被静默截断并污染显示值。钳位与滑块范围对齐为 2.0
+- **记忆去重从未真正生效**：`memories` 表的唯一键只有每次新生成的 `uuid4()`，`INSERT OR IGNORE` 什么都不会忽略，同一句话可以无限堆积。现在按内容去重：重复写入改为提升重要度并刷新时间，不再新增行
+- **控制台「live2d」来源永远空白**：日志表指向 `live2d_native.log`，但从来没有人写这个文件（实际存在的是旧 MCP 应用留下的 `live2d_mcp.log`）。现在拉起 .NET 桌宠时把它的 stdout/stderr 重定向到 `data/logs/live2d_native.log`，桌宠启动失败 / 崩溃能在控制台里看到痕迹
+- **状态文件可能写成半截 JSON**：`data/heart.json`、`data/settings_overrides.json` 与 `persona/` 下的人格文件 / `data/persona_active.json` 改为「先写临时文件再 `os.replace`」的原子写；`heart.json` 读坏时不再静默回落，会记一条 warning 并把损坏文件另存为 `.broken.json`
+- 主程序不再直接调 GUI 私有方法：新增 `ChatWindow.refresh_console()` 公开方法（`main.py` 原调用 `_refresh_console()`）
+
+#### 优化（GUI）
+
+- **基础设置页排版**：表单限制最大宽度（1040px）并居中，输入框不再横跨整窗；`应用并保存` 一类按钮恢复自然宽度（原来会被拉伸成 400px 宽的大渐变条）；「获取模型列表」不再孤零零居中；TTS 语音包四个按钮收成一行；语速 / 宠物大小滑块的数值不再被挤到屏幕最右边
+- **聊天记录页**：会话卡片补上背景与描边（原来只有当前会话有框，其它行看起来就是两行纯文本），当前会话高亮更明显，卡片内边距放宽
+- **MCP / Skills 页**：空列表给出占位说明，不再是一整块黑
+- **人格编辑器**改用等宽字体（Markdown 更好读）
+- 聊天输入框占位文案缩短（「输入消息，回车发送（可拖入图片）…」），窄窗口下不再被截断
+- 记忆页「新增记忆」行在窄窗口下不再挤压按钮
+
+---
+
 ## v0.2.2（2026-09-13）
 
 ### 修复

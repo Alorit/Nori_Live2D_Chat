@@ -349,6 +349,8 @@ class AppController(QObject):
         self._last_service_status: dict = {}
         self._fetch_models_busy = False
         self.current_conversation_id: int | None = None
+        self._heart_events_pos = 0
+        self._heart_mood = ""
         self._progress = progress or (lambda value, text: None)
 
         def _stage(value, text):
@@ -429,6 +431,12 @@ class AppController(QObject):
         self.service_status_timer.timeout.connect(self._refresh_service_status)
         self.service_status_timer.start(3 * 1000)
         self._refresh_service_status()
+
+        # heart 的内心 OS / 情绪：每 1.5 秒读一次事件文件，避免轮询开销
+        self.heart_event_timer = QTimer(self)
+        self.heart_event_timer.timeout.connect(self._poll_heart_events)
+        self.heart_event_timer.start(1500)
+        self._heart_events_pos = self._heart_events_size()
         _stage(100, "Nori 已就绪")
 
         # 首次使用向导：splash 关闭后询问用户称呼（设置里可随时修改）
@@ -638,6 +646,58 @@ class AppController(QObject):
     def _on_service_status_error(self, err):
         self._service_status_busy = False
         logging.warning("刷新服务状态失败：%s", err)
+
+    # ------------------------------------------------------------------ heart 内心 OS
+    def _heart_events_path(self):
+        return Path(self.cfg.root) / "data" / "heart_events.jsonl"
+
+    def _heart_events_size(self) -> int:
+        try:
+            return os.path.getsize(self._heart_events_path())
+        except OSError:
+            return 0
+
+    def _poll_heart_events(self):
+        """读 heart 写的内心 OS / 情绪事件（增量，只读新追加的行）。
+
+        用文件而不是 HTTP：heart 可能没在跑，端口也可能被 Live2D 占着；
+        追加式 JSONL 天然增量、被截断也能靠「文件变小」自愈。
+        """
+        path = self._heart_events_path()
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return
+        if size < self._heart_events_pos:      # 文件被清空/重建
+            self._heart_events_pos = 0
+        if size == self._heart_events_pos:
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(self._heart_events_pos)
+                chunk = f.read()
+                self._heart_events_pos = f.tell()
+        except OSError:
+            return
+        for line in chunk.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                evt = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(evt, dict):
+                continue
+            kind = str(evt.get("kind", "")).strip()
+            try:
+                if kind == "thought":
+                    self._heart_mood = str(evt.get("mood", "") or "")
+                    self.chat.append_thought(evt.get("text", ""), self._heart_mood)
+                elif kind == "state":
+                    self._heart_mood = str(evt.get("mood", "") or "")
+            except Exception as e:
+                logging.debug("显示内心 OS 失败：%s", e)
 
     def _check_preferred_tts(self):
         """后台探测首选 TTS 后端，就绪后自动切换（避免主线程 socket 阻塞）。"""
@@ -1228,7 +1288,7 @@ class AppController(QObject):
         try:
             api_key = (api_key or "").strip()
             base_url = (base_url or "https://api.deepseek.com").strip()
-            model = (model or "deepseek-v4-flash").strip()
+            model = (model or "deepseek-flash").strip()
             base_lower = base_url.lower()
             if "localhost" in base_lower or "127.0.0.1" in base_lower:
                 provider = "ollama"
@@ -1419,7 +1479,7 @@ class AppController(QObject):
             custom = [str(x).strip() for x in (self.cfg.llm.get("custom_models") or []) if str(x).strip() and str(x).strip() != name]
             current = str(self.cfg.llm.get("model", "") or "")
             if current == name:
-                current = custom[0] if custom else "deepseek-v4-flash"
+                current = custom[0] if custom else "deepseek-flash"
                 self.cfg.set_runtime("llm", "model", current)
                 self.chat.api_model_combo.setCurrentText(current)
                 self.brain.reload()
@@ -1956,7 +2016,7 @@ class AppController(QObject):
                     "⚠ 该 GPT-SoVITS 不是本面板启动的，请到日志目录关闭外部进程")
         self._refresh_service_status()
         self._refresh_status_pill()
-        self.chat._refresh_console()
+        self.chat.refresh_console()
 
     @Slot(str)
     def _on_service_action_error(self, err: str):

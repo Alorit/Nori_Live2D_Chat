@@ -13,8 +13,9 @@ llm:
   # - Ollama:   http://127.0.0.1:11434/v1
   # - 其它本地/网关: 自定义地址
   base_url: "https://api.deepseek.com"
-  # 模型名：DeepSeek 用 deepseek-v4-flash；Ollama 用 qwen2.5:7b 等
-  model: "deepseek-v4-flash"
+  # 模型名：当前端点（api.deepseek.com）实际提供 deepseek-flash / deepseek-v4-pro；
+  # 旧的 deepseek-v4-flash 已下线，请求会直接 404「model not found」
+  model: "deepseek-flash"
   temperature: 1.0
   max_tokens: 300
   # 工作记忆窗口：给 LLM 看最近多少条消息
@@ -47,31 +48,44 @@ persona:
   active_persona: "nori"
 
   # 允许使用的表情标签（LLM 只会从这些里选）
-  expressions: ["开心", "难过", "惊讶", "害羞", "生气", "认真", "困惑"]
+  expressions: ["开心", "难过", "惊讶", "害羞", "生气", "认真", "困惑", "得意", "无奈"]
   # 允许使用的动作标签
-  motions: ["点头", "摇头", "挥手", "鞠躬", "发呆"]
+  motions: ["点头", "摇头", "发呆", "兴奋", "困扰", "晕眩", "生气", "困了"]
 
   # 表情/动作标签的技术映射（不再作为 System Prompt 注入；人格完全由 .md 决定）
   # 逻辑表情名 -> Live2D 模型真实表情名 的映射（按你的模型实际 expression 名填）
-  # 注意：Nori 这个模型的 .exp3.json 是 配件/特殊眼睛 类表情，不是标准喜怒哀乐，
-  # 下面是“最接近”的映射，你可以按自己喜好换成：jk包 / 圈圈眼 / 戴帽子 / 手柄 / 爱心眼 / 脱外套 / 裙子 / 马尾L隐藏 / 马尾R隐藏 / 黑化
+  # arg-nori 的真实表情共 16 个：00_Default 01_KiraKira 02_Dizzy 03_Angry 04_Shy
+  #   05_Dark 06_Speechless 07_Smile 08_Tears 09_Troubled 10_Doubt 11_Disgust
+  #   12_Serious 13_Happy Sleep 14_Surprised
+  # 解析器会忽略 “00_” 这类数字前缀且大小写不敏感，所以这里写 smile / happy 即可。
+  # 2026-10-26 修：旧值「爱心眼 / 圈圈眼 / 黑化 / 戴帽子」是上一个 nori 模型的配件表情，
+  #   arg-nori 里并不存在 → heart 的自主表情 7/7 全部静默失败（set_expression 返回 ok:false）。
   emotion_map:
-    开心: "爱心眼"
-    难过: "圈圈眼"
-    惊讶: "圈圈眼"
-    害羞: "爱心眼"
-    生气: "黑化"
-    认真: "戴帽子"
-    困惑: "圈圈眼"
+    开心: "happy"
+    难过: "troubled"
+    惊讶: "surprised"
+    害羞: "shy"
+    生气: "angry"
+    认真: "serious"
+    困惑: "doubt"
+    得意: "smile"
+    无奈: "speechless"
 
   # 逻辑动作名 -> Live2D 模型真实动作名 的映射
-  # Nori 模型没有 .motion3.json 动作文件，动作标签会被安全忽略（不会报错）
+  # arg-nori 的动作组：Idle(01_Idle_Loop / sleep_Loop)、Reactions(02_Nod / 03_ShakeHead /
+  #   04_WakuWaku / 05_Angry / 06_Troubled / 07_Dizzy)、Effects(08_Glitch_Loop)、
+  #   Poses(Idle_pose_Loop)、Background(back_Loop)
+  # 2026-10-26 修：wave / bow 在该模型里不存在（旧注释「没有动作文件」是上一个模型的过时信息），
+  #   改用 wakuwaku / dizzy / sleep 这些真实存在的动作。
   motion_map:
     点头: "nod"
     摇头: "shake"
-    挥手: "wave"
-    鞠躬: "bow"
     发呆: "idle"
+    兴奋: "wakuwaku"
+    困扰: "troubled"
+    晕眩: "dizzy"
+    生气: "angry"
+    困了: "sleep"
 
 live2d:
   # 是否启用 Live2D（false 则只显示聊天窗口）
@@ -97,11 +111,11 @@ live2d:
   bubble_max_sec: 12
 
 tts:
-  # 只保留 Nori 音色方案：GPT-SoVITS 使用你自己的语音微调权重。
-  # 本仓库不包含任何语音模型 / 参考音频，请自行准备后填写下面两项。
+  # 只保留 Nori 音色：GPT-SoVITS 使用 Nori 语音微调权重。
+  # 权重位于 data/voices/nori/，由 GPT_SoVITS/configs/tts_infer.yaml 加载；
   # GUI 启动时自动拉起 API，冷启动期间消息排队，API 就绪后自动朗读。
-  # 旧的 sherpa / piper / edge 后端已移除；GPT-SoVITS 不可用时用
-  # system（Windows SAPI5）兜底。
+  # 旧的 sherpa / piper / edge 后端已移除（备份见 D:/Nori_Backup/）；
+  # GPT-SoVITS 不可用时用 system（Windows SAPI5）兜底。
   backend: "gpt_sovits"
   order: ["gpt_sovits", "system"]
   # 首选后端长时间不就绪（约 90 秒）时自动回落到 order 里的其它后端（即 system）；
@@ -110,21 +124,20 @@ tts:
   # 全局语速（GUI 语速滑块写入此处；各后端可自行覆盖）
   speed: 1.0
 
-  # GPT-SoVITS（中英日都行，GUI 会静默启动并显示日志）
+  # GPT-SoVITS（Nori 微调模型，中英日都行，GUI 会静默启动并显示日志）
   gpt_sovits:
     api_url: "http://127.0.0.1:9880"
     # 合成文本语言：auto / zh / en / ja ...
     text_lang: "auto"
-    # 参考音频（音色克隆参考）：本地 wav 绝对路径，自行准备后填写
-    ref_audio_path: ""
-    # 参考音频对应的文字（可选，填写效果更好）
-    prompt_text: ""
+    # 参考音频（音色克隆参考）：Nori 干净单句样本
+    ref_audio_path: "D:\\Nori_Live2D_Chat\\data\\inori_voice\\nori_ref.wav"
+    # 参考音频对应的文字（已从游戏聊天记录确认）
+    prompt_text: "Nori 是最擅长玩游戏、最喜欢你陪伴的小人偶 AI！"
     prompt_lang: "zh"
     # GUI 启动时是否自动（无窗口）拉起 GPT-SoVITS API
-    # （ref_audio_path 未填写时不会自动启动）
     auto_start: true
-    # GPT-SoVITS 安装目录（内含 runtime/pythonw.exe 与 api_v2.py），自行填写
-    runtime_dir: ""
+    # GPT-SoVITS 安装目录（内含 runtime/pythonw.exe 与 api_v2.py）
+    runtime_dir: "D:/GPT-SoVITS-v2pro-20250604-nvidia50"
 
 memory:
   # 检索后端：auto = 优先向量（如果已安装 sentence-transformers），否则 BM25
@@ -179,7 +192,7 @@ heart:
   enabled: true
   # 关闭 GUI 时是否同时停止 heart（false = heart 继续在后台自主运行）
   stop_with_gui: false
-  # 轮询间隔（秒）
+  # 轮询间隔（秒）。实际心跳由 autonomy.tick_sec 决定，这里只作为旧配置兜底
   poll_interval_sec: 20
   # 初始/兜底的醒来间隔（分钟）
   default_wake_minutes: 15
@@ -192,6 +205,46 @@ heart:
   allow_speak: true
   # 状态文件
   state_file: "data/heart.json"
+
+autonomy:
+  # ===== 秒级反射层（agent/pet_director.py）=====
+  # 不花 token：微动作、作息、主人是否在场，全部由本地规则决定。
+  # LLM 只在“醒来”时给一份带时间轴的剧本，导演负责按时间执行。
+  enabled: true
+  # 心跳间隔（秒）。1 秒足够，CPU 占用可以忽略
+  tick_sec: 1
+  # 是否启用微动作（没人说话时的小动作 / 表情）
+  micro_motion: true
+  # 微动作间隔按指数分布抖动，不是固定节拍（固定节拍看起来很机械）
+  # 0.0055 ≈ 平均 3 分钟一次；0.0012 ≈ 夜平均 14 分钟一次
+  micro_lambda_day: 0.0055
+  micro_lambda_night: 0.0012
+  # 深夜时段 [start, end)：自动切到 sleep_Loop，且不主动说话
+  quiet_hours: [1, 7]
+  # 主动说话预算：每小时最多几次（0 = 完全不主动说话）
+  speak_budget_per_hour: 3
+  # 两句自主台词之间至少隔多少秒（避免剧本里连排几句像卡带）
+  speak_cooldown_sec: 45
+
+  # ===== 主人状态感知（agent/presence.py）=====
+  # 纯本地 Win32（GetLastInputInfo / GetForegroundWindow），不联网、不截图
+  presence: true
+  # 无操作超过这个秒数算“主人不在”，她会去睡；主人回来时会有反应
+  away_sec: 300
+  # 是否把前台窗口标题喂给 LLM（默认 false：只看进程名，避免网页标题里的隐私进入提示词）
+  use_window_title: false
+
+  # ===== 心智层 =====
+  # 内心 OS / 自主说话是否显示在聊天窗（heart 写 data/heart_events.jsonl，GUI 轮询）
+  inner_os: true
+  # 人格摘要：把 8.8k 字符的人格 md 压成约 400 字给自主回合用（省约 70% 输入 token）
+  # 摘要按人格内容哈希缓存，人格改了才重新生成（一次约 9k 输入）
+  persona_digest: true
+  # 情绪基线：valence 效价 -1~1，arousal 唤醒度 0~1，energy 精力 0~1
+  emotion_baseline:
+    valence: 0.1
+    arousal: 0.45
+    energy: 0.6
 
 advanced:
   # 是否在启动时自动下载缺失的 TTS 模型（需要能访问 GitHub/HuggingFace）

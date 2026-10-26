@@ -318,6 +318,23 @@ class MemoryStore:
         ts = time.time()
         mem_id = None
         with self.lock:
+            # uuid 唯一键每次都是新值，INSERT OR IGNORE 其实永远不会忽略任何行，
+            # 相同的记忆会被反复插入。这里按内容去重：已存在就刷新时间/提升重要度。
+            dup = self.conn.execute(
+                "SELECT id, importance FROM memories WHERE content=? LIMIT 1",
+                (content,)).fetchone()
+            if dup is not None:
+                self.conn.execute(
+                    "UPDATE memories SET ts=?, last_access=?, importance=? WHERE id=?",
+                    (ts, ts, max(float(dup["importance"] or 0.0), float(importance)),
+                     int(dup["id"])))
+                self.conn.commit()
+                meta = self.mem_meta.get(int(dup["id"]))
+                if meta is not None:
+                    meta["importance"] = max(float(meta.get("importance") or 0.0),
+                                             float(importance))
+                    meta["last_access"] = ts
+                return int(dup["id"])
             cur = self.conn.execute(
                 "INSERT OR IGNORE INTO memories(uuid, ts, type, content, importance, access_count, last_access, source) "
                 "VALUES(?,?,?,?,?,0,?,?)",
@@ -538,7 +555,7 @@ class MemoryStore:
                             conversation_id: int | None = None) -> list[dict[str, Any]]:
         """按时间顺序返回最近 n 条消息（user/assistant），可按人格/会话隔离。
 
-        返回 dict：role / content / image_paths（图片消息时为路径列表）。
+        返回 dict：role / content / image_paths（图片消息时为路径列表）/ ts（时间戳）。
         """
         conds, args = [], []
         if persona:
@@ -550,7 +567,8 @@ class MemoryStore:
         where = (" WHERE " + " AND ".join(conds)) if conds else ""
         with self.lock:
             rows = self.conn.execute(
-                f"SELECT role, content, image_paths FROM messages{where} ORDER BY id DESC LIMIT ?",
+                f"SELECT role, content, image_paths, ts FROM messages{where} "
+                "ORDER BY id DESC LIMIT ?",
                 (*args, n)).fetchall()
         rows = list(reversed(rows))
         out = []
@@ -565,6 +583,7 @@ class MemoryStore:
                 "role": r["role"],
                 "content": r["content"] or "",
                 "image_paths": image_paths,
+                "ts": r["ts"],
             })
         return out
 

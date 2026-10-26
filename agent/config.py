@@ -50,6 +50,7 @@ class Config:
         self.memory = _DictObj(data.get("memory", {}))
         self.gui = _DictObj(data.get("gui", {}))
         self.heart = _DictObj(data.get("heart", {}))
+        self.autonomy = _DictObj(data.get("autonomy", {}))
         self.advanced = _DictObj(data.get("advanced", {}))
 
         # 常用路径解析成绝对路径
@@ -118,8 +119,10 @@ class Config:
             except Exception:
                 merged = {}
         _deep_merge(merged, overrides)
-        self.overrides_path.write_text(
-            json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 原子写：先写临时文件再 os.replace，避免写一半被中断把用户设置写坏
+        tmp = self.overrides_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, self.overrides_path)
         return str(self.overrides_path)
 
 

@@ -14,6 +14,23 @@ data/inori_probe/
 data/inori_voice/
 data/voices/
 
+# 运行时产物（会不断增长，不入库）
+data/*.log
+data/heart_events.jsonl
+data/heart_persona_digest.json
+data/inori_*.txt
+data/inori_*.log
+
+# 本机个人数据（头像/临时探针脚本）
+data/avatars/user_avatar.*
+data/avatars/persona_*.png
+scripts/inori_*.py
+
+# 人格正文只保留说明文件；具体人设由使用者自己写
+persona/*.md
+!persona/README.md
+persona/*.meta.json
+
 # Python 缓存/虚拟环境
 __pycache__/
 *.py[cod]

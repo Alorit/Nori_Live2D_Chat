@@ -33,6 +33,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -177,7 +178,6 @@ QLineEdit#MessageInput {
     border: 1px solid rgba(103, 232, 249, 0.4);
     border-radius: 20px;
     padding: 10px 16px;
-    font-size: 13px;
     color: #eafff7;
 }
 QLineEdit#MessageInput:focus {
@@ -412,6 +412,39 @@ QLabel#HistoryItemMeta {
     border: none;
     padding: 0;
 }
+QLabel#InnerOS {
+    color: #93a6cf;
+    background: rgba(12, 22, 44, 0.55);
+    border: 1px dashed rgba(147, 166, 207, 0.26);
+    border-radius: 11px;
+    padding: 5px 12px;
+    font-style: italic;
+}
+QWidget#HistoryCard {
+    background: rgba(16, 30, 58, 0.55);
+    border: 1px solid rgba(103, 232, 249, 0.10);
+    border-radius: 10px;
+}QWidget#HistoryCardActive {
+    background: rgba(18, 46, 78, 0.92);
+    border: 1px solid rgba(103, 232, 249, 0.55);
+    border-radius: 10px;
+}
+QScrollArea#SettingsScroll {
+    background: transparent;
+    border: none;
+}
+QScrollArea#SettingsScroll > QWidget > QWidget {
+    background: transparent;
+}
+QPushButton#IconButton {
+    padding: 0;
+    margin: 0;
+    border-radius: 14px;
+    font-size: 14px;
+}
+QPlainTextEdit#PersonaEditor {
+    font-family: Consolas, "Microsoft YaHei UI", monospace;
+}
 """
 
 
@@ -420,7 +453,8 @@ class MessageBubble(QWidget):
 
     def __init__(self, text: str, who: str, avatar: str, name_color: str,
                  align_right: bool, tag: str = "", font_size: int = 13,
-                 image_paths: list[str] | None = None, parent=None):
+                 image_paths: list[str] | None = None, ts: float | None = None,
+                 parent=None):
         super().__init__(parent)
         outer = QHBoxLayout(self)
         outer.setContentsMargins(6, 2, 6, 2)
@@ -473,7 +507,7 @@ class MessageBubble(QWidget):
                 "padding:1px 6px; font-size:9px; letter-spacing:1px;")
             header.addWidget(tag_label)
         header.addStretch(1)
-        time_label = QLabel(_datetime.now().strftime("%H:%M"), bubble_frame)
+        time_label = QLabel(self._format_ts(ts), bubble_frame)
         time_label.setStyleSheet("color:#7d8db5; font-size:10px;")
         header.addWidget(time_label)
         bubble_layout.addLayout(header)
@@ -503,6 +537,22 @@ class MessageBubble(QWidget):
             outer.addWidget(avatar_label)
             outer.addWidget(bubble_frame)
             outer.addStretch(1)
+
+    @staticmethod
+    def _format_ts(ts: float | None) -> str:
+        """消息时间：当天只显示 HH:MM，跨天再补上日期，回放历史时不会显得是“刚刚”。"""
+        now = _datetime.now()
+        try:
+            if ts:
+                t = _datetime.fromtimestamp(float(ts))
+                if t.date() == now.date():
+                    return t.strftime("%H:%M")
+                if t.year == now.year:
+                    return t.strftime("%m-%d %H:%M")
+                return t.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+        return now.strftime("%H:%M")
 
     @staticmethod
     def _make_image_label(path: str, max_w: int = 300, max_h: int = 240) -> QLabel:
@@ -545,16 +595,26 @@ class MessageBubble(QWidget):
 
 
 class _WheelGuard(QObject):
-    """吞掉设置控件上的滚轮事件，但转发给设置滚动区，避免误改值又能正常滚动页面。"""
+    """吞掉设置控件上的滚轮事件，但转发给所在滚动区，避免误改值又能正常滚动页面。"""
 
     def __init__(self, parent=None, scroll_area=None):
         super().__init__(parent)
         self.scroll_area = scroll_area
 
+    def _resolve_scroll(self, obj):
+        """优先找控件自己所属的滚动区（设置页每个子页各有一个），找不到再用兜底。"""
+        w = obj.parent() if isinstance(obj, QWidget) else None
+        while w is not None:
+            if isinstance(w, QScrollArea):
+                return w
+            w = w.parent()
+        return self.scroll_area
+
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Wheel:
-            if self.scroll_area is not None:
-                viewport = self.scroll_area.viewport()
+            scroll = self._resolve_scroll(obj)
+            if scroll is not None:
+                viewport = scroll.viewport()
                 if viewport is not None:
                     QCoreApplication.sendEvent(viewport, event)
             return True
@@ -630,9 +690,9 @@ class ChatWindow(QWidget):
     service_action_requested = Signal(str)
 
     def __init__(self, cfg, quit_on_close: bool = False, live2d_mode: bool = False):
+        """quit_on_close 仅为兼容旧调用而保留：关闭窗口一律发 quit_requested，由主进程收尾。"""
         super().__init__()
         self.cfg = cfg
-        self._quit_on_close = quit_on_close
         self.live2d_mode = live2d_mode
         self._editing_mem_id: int | None = None
         gui = cfg.gui
@@ -661,7 +721,8 @@ class ChatWindow(QWidget):
         self.status_label.setObjectName("StatusPill")
         header.addWidget(self.status_label)
         self.tts_refresh_btn = QPushButton("🔄", self)
-        self.tts_refresh_btn.setFixedWidth(34)
+        self.tts_refresh_btn.setObjectName("IconButton")
+        self.tts_refresh_btn.setFixedSize(34, 30)
         self.tts_refresh_btn.setToolTip("重新检测 TTS 与后台服务状态")
         self.tts_refresh_btn.clicked.connect(lambda: self.tts_status_refresh_requested.emit())
         header.addWidget(self.tts_refresh_btn)
@@ -689,12 +750,6 @@ class ChatWindow(QWidget):
         self.memory_page = QWidget(self.settings_page)
         self.mcp_page = QWidget(self.settings_page)
         self.console_page = QWidget(self.settings_page)
-        self.settings_tabs.addTab(self.settings_basic_page, "🎛 基础设置")
-        self.settings_tabs.addTab(self.history_page, "🗂 聊天记录")
-        self.settings_tabs.addTab(self.persona_page, "📜 人格")
-        self.settings_tabs.addTab(self.memory_page, "🧠 记忆")
-        self.settings_tabs.addTab(self.mcp_page, "🔌 MCP / Skills")
-        self.settings_tabs.addTab(self.console_page, "🖥️ 控制台")
         self.settings_layout = QVBoxLayout(self.settings_page)
         self.settings_layout.setContentsMargins(8, 8, 8, 8)
 
@@ -705,14 +760,27 @@ class ChatWindow(QWidget):
         self._build_mcp_page()
         self._build_console_page()
 
-        # 设置页放进滚动区：窗口高度缩小时可上下滚动，内容不会被压坏
-        self.settings_scroll = QScrollArea(self.settings_page)
-        self.settings_scroll.setWidgetResizable(True)
-        self.settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.settings_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.settings_scroll.setFrameShape(QFrame.NoFrame)
-        self.settings_scroll.setWidget(self.settings_tabs)
-        self.settings_layout.addWidget(self.settings_scroll)
+        # 每个子页各包一层滚动区：页签栏固定在顶部，只有当前页内容滚动，
+        # 避免「页签跟着内容一起滚走」「某一页很长把其它页底部按钮顶到视口外」。
+        self._settings_scrolls: list[QScrollArea] = []
+        for page, label in (
+            (self.settings_basic_page, "🎛 基础设置"),
+            (self.history_page, "🗂 聊天记录"),
+            (self.persona_page, "📜 人格"),
+            (self.memory_page, "🧠 记忆"),
+            (self.mcp_page, "🔌 MCP / Skills"),
+            (self.console_page, "🖥️ 控制台"),
+        ):
+            scroll = QScrollArea(self.settings_page)
+            scroll.setObjectName("SettingsScroll")
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setWidget(page)
+            self.settings_tabs.addTab(scroll, label)
+            self._settings_scrolls.append(scroll)
+        self.settings_layout.addWidget(self.settings_tabs)
         self._install_wheel_guard()
 
         # 让窗口高度可自由收缩（设置页内容不再撑起 1000+ 的最小高度）
@@ -725,7 +793,7 @@ class ChatWindow(QWidget):
     def _fit_to_screen(self):
         """启动时若默认窗口超出屏幕，自动缩到可用区域内，避免“太长”。"""
         try:
-            screen = self.screen() or QApplication_primary_screen()
+            screen = self.screen() or QApplication.primaryScreen()
             if screen is None:
                 return
             geo = screen.availableGeometry()
@@ -735,9 +803,17 @@ class ChatWindow(QWidget):
         except Exception:
             pass
 
+    def _current_settings_page(self) -> QWidget:
+        """当前子页签对应的真实页面（页签里放的是滚动区，不是页面本身）。"""
+        w = self.settings_tabs.currentWidget()
+        if isinstance(w, QScrollArea):
+            return w.widget()
+        return w
+
     def _install_wheel_guard(self):
-        """设置页内所有下拉框/滑条/数值框禁用滚轮修改，但滚轮仍可滚动设置页。"""
-        self._wheel_guard = _WheelGuard(self, scroll_area=self.settings_scroll)
+        """设置页内所有下拉框/滑条/数值框禁用滚轮修改，但滚轮仍可滚动所在的设置页。"""
+        fallback = self._settings_scrolls[0] if getattr(self, "_settings_scrolls", None) else None
+        self._wheel_guard = _WheelGuard(self, scroll_area=fallback)
         types = (QComboBox, QSlider, QSpinBox, QDoubleSpinBox)
         for w in self.settings_tabs.findChildren(QWidget):
             if isinstance(w, types):
@@ -860,7 +936,7 @@ class ChatWindow(QWidget):
 
         self.input = QLineEdit(self.chat_page)
         self.input.setObjectName("MessageInput")
-        self.input.setPlaceholderText("输入消息，回车发送；📷 发图片，😊 发表情包…")
+        self.input.setPlaceholderText("输入消息，回车发送（可拖入图片）…")
         self.input.returnPressed.connect(self._on_send)
         input_row.addWidget(self.input, 1)
 
@@ -927,6 +1003,7 @@ class ChatWindow(QWidget):
         bl.addWidget(self.persona_path_label)
 
         self.persona_edit = QPlainTextEdit(self.persona_page)
+        self.persona_edit.setObjectName("PersonaEditor")
         self.persona_edit.setPlaceholderText("在这里编辑 Nori 的人格提示词（Markdown）…")
         self.persona_edit.textChanged.connect(lambda: setattr(self, "_persona_dirty", True))
         bl.addWidget(self.persona_edit, 1)
@@ -1056,6 +1133,7 @@ class ChatWindow(QWidget):
         search_row.addWidget(self.mem_search, 1)
         self.mem_type_combo = QComboBox(self.memory_page)
         self.mem_type_combo.addItems(["全部", "episodic", "semantic"])
+        self.mem_type_combo.setMaximumWidth(150)
         self.mem_type_combo.currentIndexChanged.connect(self._emit_memory_refresh)
         search_row.addWidget(self.mem_type_combo)
         self.mem_refresh_btn = QPushButton("🔄 刷新", self.memory_page)
@@ -1073,6 +1151,7 @@ class ChatWindow(QWidget):
         review_row.addWidget(QLabel("间隔（分钟）", self.memory_page))
         self.mem_review_spin = QSpinBox(self.memory_page)
         self.mem_review_spin.setRange(5, 240)
+        self.mem_review_spin.setMaximumWidth(110)
         self.mem_review_spin.setValue(int(self.cfg.memory.get("auto_review_minutes", 30)))
         self.mem_review_spin.valueChanged.connect(self._emit_auto_review)
         review_row.addWidget(self.mem_review_spin)
@@ -1087,25 +1166,30 @@ class ChatWindow(QWidget):
         edit_row = QHBoxLayout()
         edit_row.setSpacing(6)
         self.mem_new_content = QLineEdit(self.memory_page)
-        self.mem_new_content.setPlaceholderText("新增记忆内容（双击下方条目可编辑）…")
+        self.mem_new_content.setPlaceholderText("记忆内容（双击条目可编辑）…")
+        self.mem_new_content.setMinimumWidth(150)
         edit_row.addWidget(self.mem_new_content, 1)
         self.mem_new_type = QComboBox(self.memory_page)
         self.mem_new_type.addItems(["episodic", "semantic"])
+        self.mem_new_type.setMaximumWidth(130)
         edit_row.addWidget(self.mem_new_type)
         self.mem_new_imp = QDoubleSpinBox(self.memory_page)
         self.mem_new_imp.setRange(0.0, 1.0)
         self.mem_new_imp.setSingleStep(0.05)
         self.mem_new_imp.setValue(0.6)
         self.mem_new_imp.setPrefix("重要度 ")
+        self.mem_new_imp.setMaximumWidth(150)
         edit_row.addWidget(self.mem_new_imp)
         self.mem_add_btn = QPushButton("＋ 新增", self.memory_page)
         self.mem_add_btn.setObjectName("PrimaryButton")
         self.mem_add_btn.clicked.connect(self._on_memory_add)
         edit_row.addWidget(self.mem_add_btn)
-        self.mem_update_btn = QPushButton("✏ 更新选中", self.memory_page)
+        self.mem_update_btn = QPushButton("✏ 更新", self.memory_page)
+        self.mem_update_btn.setToolTip("用左侧内容更新选中的记忆")
         self.mem_update_btn.clicked.connect(self._on_memory_update)
         edit_row.addWidget(self.mem_update_btn)
-        self.mem_delete_btn = QPushButton("🗑 删除选中", self.memory_page)
+        self.mem_delete_btn = QPushButton("🗑 删除", self.memory_page)
+        self.mem_delete_btn.setToolTip("删除选中的记忆")
         self.mem_delete_btn.setObjectName("DangerButton")
         self.mem_delete_btn.clicked.connect(self._on_memory_delete)
         edit_row.addWidget(self.mem_delete_btn)
@@ -1278,6 +1362,7 @@ class ChatWindow(QWidget):
         mcp_row.addStretch(1)
         m.addLayout(mcp_row)
         self.mcp_list = QListWidget(self.mcp_page)
+        self.mcp_list.setMinimumHeight(160)
         m.addWidget(self.mcp_list)
         layout.addWidget(mcp_box)
 
@@ -1301,8 +1386,12 @@ class ChatWindow(QWidget):
         skill_row.addStretch(1)
         s.addLayout(skill_row)
         self.skill_list = QListWidget(self.mcp_page)
+        self.skill_list.setMinimumHeight(160)
         s.addWidget(self.skill_list)
         layout.addWidget(skill_box, 1)
+        # 初始就是空列表时也给出提示，避免两片纯黑空白框
+        self.set_mcp_servers([])
+        self.set_skills([])
 
     def _on_add_mcp(self):
         name, ok = QInputDialog.getText(self, "添加 MCP", "名称：")
@@ -1373,6 +1462,10 @@ class ChatWindow(QWidget):
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, r.get("name"))
             self.mcp_list.addItem(item)
+        if not rows:
+            self._add_list_placeholder(
+                self.mcp_list,
+                "（还没有 MCP 服务器 —— 点「＋ 添加」或「📂 导入 MCP JSON」接入外部工具）")
 
     def set_skills(self, rows: list[dict]):
         self.skill_list.clear()
@@ -1381,6 +1474,17 @@ class ChatWindow(QWidget):
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, r.get("name"))
             self.skill_list.addItem(item)
+        if not rows:
+            self._add_list_placeholder(
+                self.skill_list,
+                "（还没有 Skill —— 点「＋ 导入 Skill」导入一个指令包文件夹）")
+
+    @staticmethod
+    def _add_list_placeholder(lst, text: str):
+        item = QListWidgetItem(text)
+        item.setFlags(Qt.NoItemFlags)
+        item.setForeground(QColor("#52638c"))
+        lst.addItem(item)
 
     # ------------------------------------------------------------------ 控制台页
     def _build_console_page(self):
@@ -1479,10 +1583,14 @@ class ChatWindow(QWidget):
         if self.console_auto.isChecked():
             self._refresh_console()
 
+    def refresh_console(self):
+        """供主进程调用的公开入口：控制台页可见时立刻重读一遍日志。"""
+        self._refresh_console()
+
     def _refresh_console(self):
         # 控制台不可见时不读日志、不刷文本，避免周期性卡顿
         if (self.tabs.currentWidget() is not self.settings_page or
-                self.settings_tabs.currentWidget() is not self.console_page):
+                self._current_settings_page() is not self.console_page):
             return
         try:
             text = collect_logs(
@@ -1526,16 +1634,34 @@ class ChatWindow(QWidget):
 
     # ------------------------------------------------------------------ 设置页
     def _build_basic_settings_page(self):
-        layout = QVBoxLayout(self.settings_basic_page)
+        page = self.settings_basic_page
+        # 内容限制最大宽度并居中：宽窗口下表单不会被拉成一条横贯全屏的长条，
+        # 按钮也不会被撑成大色块。
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        center = QHBoxLayout()
+        center.setContentsMargins(0, 0, 0, 0)
+        center.addStretch(1)
+        content = QWidget(page)
+        content.setMaximumWidth(1040)
+        center.addWidget(content, 100)
+        center.addStretch(1)
+        outer.addLayout(center)
+
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
         # LLM / API 配置（支持 DeepSeek、OpenAI、Ollama、自定义 OpenAI 兼容端点）
-        api_box = QGroupBox("LLM / API 配置（支持自定义提供商与本地 Ollama）", self.settings_basic_page)
+        api_box = QGroupBox("LLM / API 配置（支持自定义提供商与本地 Ollama）", page)
         api_box.setObjectName("PanelBox")
         api_grid = QGridLayout(api_box)
         api_grid.setHorizontalSpacing(10)
         api_grid.setVerticalSpacing(8)
+        # 多余宽度只给输入框列，标签列与按钮列保持紧凑
+        api_grid.setColumnStretch(1, 1)
+        api_grid.setColumnStretch(2, 1)
 
         api_grid.addWidget(QLabel("提供商", self.settings_basic_page), 0, 0)
         self.api_provider_combo = QComboBox(self.settings_basic_page)
@@ -1567,7 +1693,7 @@ class ChatWindow(QWidget):
         self.api_model_combo = QComboBox(self.settings_basic_page)
         self.api_model_combo.setEditable(True)
         self.api_model_combo.addItems([
-            "deepseek-v4-flash", "deepseek-chat",
+            "deepseek-flash", "deepseek-v4-pro", "deepseek-chat",
             "gpt-4o-mini", "gpt-4o",
             "qwen2.5:7b", "qwen2.5:14b", "llama3.1:8b", "gemma2:9b",
         ])
@@ -1575,7 +1701,7 @@ class ChatWindow(QWidget):
             m = str(m).strip()
             if m and self.api_model_combo.findText(m) < 0:
                 self.api_model_combo.addItem(m)
-        self.api_model_combo.setCurrentText(str(self.cfg.llm.get("model", "deepseek-v4-flash")))
+        self.api_model_combo.setCurrentText(str(self.cfg.llm.get("model", "deepseek-flash")))
         api_grid.addWidget(self.api_model_combo, 3, 1, 1, 2)
         self.api_apply_btn = QPushButton("应用并保存 API", self.settings_basic_page)
         self.api_apply_btn.setObjectName("PrimaryButton")
@@ -1585,7 +1711,7 @@ class ChatWindow(QWidget):
         self.api_fetch_models_btn = QPushButton("🔄 获取模型列表", self.settings_basic_page)
         self.api_fetch_models_btn.setToolTip("从当前 Base URL 拉取可用模型（OpenAI 兼容 / Ollama）")
         self.api_fetch_models_btn.clicked.connect(self._emit_fetch_llm_models)
-        api_grid.addWidget(self.api_fetch_models_btn, 4, 1)
+        api_grid.addWidget(self.api_fetch_models_btn, 4, 1, Qt.AlignLeft)
         layout.addWidget(api_box)
         self._sync_api_provider_from_base()
         self._install_combo_context_menu(self.api_model_combo, "llm")
@@ -1601,6 +1727,8 @@ class ChatWindow(QWidget):
         font_grid = QGridLayout(font_box)
         font_grid.setHorizontalSpacing(10)
         font_grid.setVerticalSpacing(8)
+        font_grid.setColumnStretch(1, 1)
+        font_grid.setColumnStretch(3, 1)
 
         # 界面字体 / 聊天气泡字体分开设置
         font_grid.addWidget(QLabel("界面字体大小", self.settings_basic_page), 0, 0)
@@ -1639,18 +1767,23 @@ class ChatWindow(QWidget):
         self.user_name_save_btn = QPushButton("应用昵称", self.settings_basic_page)
         self.user_name_save_btn.clicked.connect(
             lambda: self.user_name_requested.emit(self.user_name_edit.text().strip()))
-        font_grid.addWidget(self.user_name_save_btn, 1, 3)
+        font_grid.addWidget(self.user_name_save_btn, 1, 3, Qt.AlignLeft)
 
         font_grid.addWidget(QLabel("我的头像", self.settings_basic_page), 2, 0)
         self.user_avatar_label = QLabel("🧑（默认）", self.settings_basic_page)
+        self.user_avatar_label.setStyleSheet("color: #8fa6d8;")
         self.user_avatar_btn = QPushButton("选择图片…", self.settings_basic_page)
         self.user_avatar_btn.clicked.connect(lambda: self._on_select_avatar("user"))
         self.user_avatar_reset_btn = QPushButton("恢复默认", self.settings_basic_page)
         self.user_avatar_reset_btn.clicked.connect(
             lambda: self.avatar_requested.emit("user", ""))
         font_grid.addWidget(self.user_avatar_label, 2, 1)
-        font_grid.addWidget(self.user_avatar_btn, 2, 2)
-        font_grid.addWidget(self.user_avatar_reset_btn, 2, 3)
+        user_avatar_row = QHBoxLayout()
+        user_avatar_row.setSpacing(8)
+        user_avatar_row.addWidget(self.user_avatar_btn)
+        user_avatar_row.addWidget(self.user_avatar_reset_btn)
+        user_avatar_row.addStretch(1)
+        font_grid.addLayout(user_avatar_row, 2, 2, 1, 2)
 
         # 智能体（当前人格）名字与头像
         font_grid.addWidget(QLabel("智能体名字", self.settings_basic_page), 3, 0)
@@ -1662,24 +1795,33 @@ class ChatWindow(QWidget):
         self.agent_name_save_btn = QPushButton("应用名字", self.settings_basic_page)
         self.agent_name_save_btn.clicked.connect(
             lambda: self.agent_name_requested.emit(self.agent_name_edit.text().strip()))
-        font_grid.addWidget(self.agent_name_save_btn, 3, 3)
+        font_grid.addWidget(self.agent_name_save_btn, 3, 3, Qt.AlignLeft)
 
         font_grid.addWidget(QLabel("智能体头像", self.settings_basic_page), 4, 0)
         self.agent_avatar_label = QLabel("🐱（默认）", self.settings_basic_page)
+        self.agent_avatar_label.setStyleSheet("color: #8fa6d8;")
         self.agent_avatar_btn = QPushButton("选择图片…", self.settings_basic_page)
         self.agent_avatar_btn.clicked.connect(lambda: self._on_select_agent_avatar())
         self.agent_avatar_reset_btn = QPushButton("恢复默认", self.settings_basic_page)
         self.agent_avatar_reset_btn.clicked.connect(
             lambda: self.agent_avatar_requested.emit(""))
         font_grid.addWidget(self.agent_avatar_label, 4, 1)
-        font_grid.addWidget(self.agent_avatar_btn, 4, 2)
-        font_grid.addWidget(self.agent_avatar_reset_btn, 4, 3)
+        agent_avatar_row = QHBoxLayout()
+        agent_avatar_row.setSpacing(8)
+        agent_avatar_row.addWidget(self.agent_avatar_btn)
+        agent_avatar_row.addWidget(self.agent_avatar_reset_btn)
+        agent_avatar_row.addStretch(1)
+        font_grid.addLayout(agent_avatar_row, 4, 2, 1, 2)
         layout.addWidget(font_box)
 
         # 上下文压缩
         comp_box = QGroupBox("上下文压缩（LLM）", self.settings_basic_page)
         comp_box.setObjectName("PanelBox")
         comp_grid = QGridLayout(comp_box)
+        comp_grid.setHorizontalSpacing(10)
+        comp_grid.setVerticalSpacing(8)
+        comp_grid.setColumnStretch(1, 1)
+        comp_grid.setColumnStretch(3, 1)
         comp_grid.addWidget(QLabel("压缩模式", self.settings_basic_page), 0, 0)
         self.compression_mode_combo = QComboBox(self.settings_basic_page)
         self.compression_mode_combo.addItem("关闭", "off")
@@ -1696,7 +1838,8 @@ class ChatWindow(QWidget):
         self.compression_window_spin.setRange(5, 50)
         self.compression_window_spin.setValue(int(comp_cfg.get("window_size", 20)))
         self.compression_window_spin.valueChanged.connect(self._emit_compression)
-        comp_grid.addWidget(self.compression_window_spin, 0, 3)
+        self.compression_window_spin.setMaximumWidth(140)
+        comp_grid.addWidget(self.compression_window_spin, 0, 3, Qt.AlignLeft)
 
         comp_grid.addWidget(QLabel("摘要最大字数", self.settings_basic_page), 1, 0)
         self.compression_chars_spin = QSpinBox(self.settings_basic_page)
@@ -1704,7 +1847,8 @@ class ChatWindow(QWidget):
         self.compression_chars_spin.setSingleStep(50)
         self.compression_chars_spin.setValue(int(comp_cfg.get("max_chars", 300)))
         self.compression_chars_spin.valueChanged.connect(self._emit_compression)
-        comp_grid.addWidget(self.compression_chars_spin, 1, 1)
+        self.compression_chars_spin.setMaximumWidth(140)
+        comp_grid.addWidget(self.compression_chars_spin, 1, 1, Qt.AlignLeft)
         layout.addWidget(comp_box)
         layout.addStretch(1)
 
@@ -1735,7 +1879,7 @@ class ChatWindow(QWidget):
         if provider == "deepseek":
             self.api_base_edit.setText("https://api.deepseek.com")
             if not self.api_model_combo.currentText().strip().startswith("deepseek"):
-                self.api_model_combo.setCurrentText("deepseek-v4-flash")
+                self.api_model_combo.setCurrentText("deepseek-flash")
         elif provider == "openai":
             self.api_base_edit.setText("https://api.openai.com/v1")
             if not self.api_model_combo.currentText().strip().startswith("gpt"):
@@ -1781,6 +1925,8 @@ class ChatWindow(QWidget):
         grid = QGridLayout(box)
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
 
         grid.addWidget(QLabel("API Key", page), 0, 0)
         self.search_api_edit = QLineEdit(page)
@@ -1792,12 +1938,15 @@ class ChatWindow(QWidget):
         self.search_api_show.toggled.connect(
             lambda on: self.search_api_edit.setEchoMode(
                 QLineEdit.Normal if on else QLineEdit.Password))
-        grid.addWidget(self.search_api_show, 0, 3)
-
+        # 「显示」和「应用并保存」并排放在右侧，避免按钮单独占一行悬空
         self.search_api_apply_btn = QPushButton("应用并保存", page)
         self.search_api_apply_btn.setObjectName("PrimaryButton")
         self.search_api_apply_btn.clicked.connect(self._emit_search_config)
-        grid.addWidget(self.search_api_apply_btn, 1, 3)
+        right = QHBoxLayout()
+        right.setSpacing(8)
+        right.addWidget(self.search_api_show)
+        right.addWidget(self.search_api_apply_btn)
+        grid.addLayout(right, 0, 3)
         return box
 
     def _build_vision_api_box(self) -> QGroupBox:
@@ -1807,6 +1956,8 @@ class ChatWindow(QWidget):
         grid = QGridLayout(box)
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
 
         # 读取独立视觉 MCP 配置（vision_mcp/config.json），不存在则用默认值
         vision_cfg: dict = {}
@@ -1847,12 +1998,13 @@ class ChatWindow(QWidget):
         self.vision_port_spin = QSpinBox(page)
         self.vision_port_spin.setRange(1, 65535)
         self.vision_port_spin.setValue(int(vision_cfg.get("port", 47833) or 47833))
-        grid.addWidget(self.vision_port_spin, 3, 1)
+        self.vision_port_spin.setMaximumWidth(140)
+        grid.addWidget(self.vision_port_spin, 3, 1, Qt.AlignLeft)
 
         self.vision_api_apply_btn = QPushButton("应用并保存", page)
         self.vision_api_apply_btn.setObjectName("PrimaryButton")
         self.vision_api_apply_btn.clicked.connect(self._emit_vision_config)
-        grid.addWidget(self.vision_api_apply_btn, 3, 2, 1, 2)
+        grid.addWidget(self.vision_api_apply_btn, 3, 3, Qt.AlignLeft)
 
         hint = QLabel("保存到 vision_mcp/config.json。若视觉 MCP 正在运行，需要重启 vision_mcp/server.py。",
                       page)
@@ -1879,27 +2031,34 @@ class ChatWindow(QWidget):
         grid = QGridLayout(box)
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
 
         grid.addWidget(QLabel("当前语音包", page), 0, 0)
         self.tts_voice_combo = QComboBox(page)
         grid.addWidget(self.tts_voice_combo, 0, 1, 1, 3)
 
+        # 四个操作按钮并排一行（左对齐、自然宽度），不再各占一整列被拉成大色块
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
         self.tts_voice_refresh_btn = QPushButton("🔄 刷新", page)
         self.tts_voice_refresh_btn.clicked.connect(self._on_tts_voice_refresh)
-        grid.addWidget(self.tts_voice_refresh_btn, 1, 0)
+        btn_row.addWidget(self.tts_voice_refresh_btn)
 
         self.tts_voice_import_btn = QPushButton("📂 导入语音包", page)
         self.tts_voice_import_btn.clicked.connect(self._on_tts_voice_import)
-        grid.addWidget(self.tts_voice_import_btn, 1, 1)
+        btn_row.addWidget(self.tts_voice_import_btn)
 
         self.tts_voice_switch_btn = QPushButton("🔄 切换并重启", page)
         self.tts_voice_switch_btn.setObjectName("PrimaryButton")
         self.tts_voice_switch_btn.clicked.connect(self._on_tts_voice_switch)
-        grid.addWidget(self.tts_voice_switch_btn, 1, 2)
+        btn_row.addWidget(self.tts_voice_switch_btn)
 
         self.tts_voice_export_btn = QPushButton("📦 导出语音包", page)
         self.tts_voice_export_btn.clicked.connect(self._on_tts_voice_export)
-        grid.addWidget(self.tts_voice_export_btn, 1, 3)
+        btn_row.addWidget(self.tts_voice_export_btn)
+        btn_row.addStretch(1)
+        grid.addLayout(btn_row, 1, 0, 1, 4)
 
         self.tts_voice_status = QLabel("", page)
         self.tts_voice_status.setWordWrap(True)
@@ -2120,9 +2279,11 @@ class ChatWindow(QWidget):
             current = r.get("id") == self._conversation_current_id
 
             card = QWidget(self.history_list)
+            card.setObjectName("HistoryCardActive" if current else "HistoryCard")
+            card.setAttribute(Qt.WA_StyledBackground, True)
             v = QVBoxLayout(card)
-            v.setContentsMargins(10, 7, 10, 7)
-            v.setSpacing(2)
+            v.setContentsMargins(14, 10, 14, 10)
+            v.setSpacing(4)
             t = QLabel(("▶ " if current else "") + title, card)
             t.setObjectName("HistoryItemTitleActive" if current else "HistoryItemTitle")
             m = QLabel(" · ".join(meta_bits), card)
@@ -2207,6 +2368,8 @@ class ChatWindow(QWidget):
         grid.setContentsMargins(8, 6, 8, 6)
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(8)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 0)
 
         # 声音后端（仅保留 Nori 音色）
         grid.addWidget(QLabel("声音后端", page), 0, 0)
@@ -2373,12 +2536,12 @@ class ChatWindow(QWidget):
             self.settings_btn.setChecked(checked)
             self.settings_btn.blockSignals(False)
         self.settings_btn.setText("✕ 返回聊天" if checked else "⚙ 设置")
-        if checked and self.settings_tabs.currentWidget() is self.console_page:
+        if checked and self._current_settings_page() is self.console_page:
             self._refresh_console()
 
     def _on_settings_tab_changed(self, _index: int):
         """切到控制台页时立即刷新一次日志。"""
-        if self.settings_tabs.currentWidget() is self.console_page:
+        if self._current_settings_page() is self.console_page:
             self._refresh_console()
 
     def set_status(self, text: str):
@@ -2401,11 +2564,14 @@ class ChatWindow(QWidget):
             self.backend_combo.setCurrentIndex(idx)
             self.backend_combo.blockSignals(False)
         self.speed_slider.blockSignals(True)
-        self.speed_slider.setValue(int(round(max(0.8, min(1.3, speed)) * 100)))
+        speed = max(0.8, min(1.3, speed))
+        self.speed_slider.setValue(int(round(speed * 100)))
         self.speed_slider.blockSignals(False)
         self.speed_label.setText(f"{speed:.2f}x")
         self.scale_slider.blockSignals(True)
-        self.scale_slider.setValue(int(round(max(0.5, min(3.0, scale)) * 100)))
+        # 滑条范围就是 0.5x~2.0x，这里的钳位必须与之一致，否则滑块会被静默截断
+        scale = max(0.5, min(2.0, scale))
+        self.scale_slider.setValue(int(round(scale * 100)))
         self.scale_slider.blockSignals(False)
         self.scale_label.setText(f"{scale:.2f}x")
         self.top_check.blockSignals(True)
@@ -2590,17 +2756,21 @@ class ChatWindow(QWidget):
     def set_chat_history(self, messages: list[dict]):
         self.clear_chat()
         for m in messages or []:
+            try:
+                ts = float(m.get("ts") or 0) or None
+            except (TypeError, ValueError):
+                ts = None
             if m.get("role") == "user":
                 image_paths = m.get("image_paths") or []
                 if image_paths:
-                    self.append_user_media(image_paths, m.get("content", ""))
+                    self.append_user_media(image_paths, m.get("content", ""), ts=ts)
                 else:
-                    self.append_user(m.get("content", ""))
+                    self.append_user(m.get("content", ""), ts=ts)
             elif m.get("role") == "assistant":
-                self.append_assistant(m.get("content", ""))
+                self.append_assistant(m.get("content", ""), ts=ts)
         QTimer.singleShot(120, self._scroll_chat_to_bottom)
 
-    def append_user(self, text: str):
+    def append_user(self, text: str, ts: float | None = None):
         self._append_bubble(
             text,
             who=self._user_name,
@@ -2608,9 +2778,11 @@ class ChatWindow(QWidget):
             name_color="#7dd3fc",
             align_right=True,
             tag="MASTER",
+            ts=ts,
         )
 
-    def append_user_media(self, image_paths: list[str], caption: str = ""):
+    def append_user_media(self, image_paths: list[str], caption: str = "",
+                          ts: float | None = None):
         """显示用户发送的图片/表情包气泡；caption 可选。"""
         self._append_bubble(
             caption or "",
@@ -2620,9 +2792,10 @@ class ChatWindow(QWidget):
             align_right=True,
             tag="MASTER",
             image_paths=image_paths,
+            ts=ts,
         )
 
-    def append_assistant(self, text: str):
+    def append_assistant(self, text: str, ts: float | None = None):
         self._append_bubble(
             text,
             who=self._agent_name,
@@ -2630,22 +2803,54 @@ class ChatWindow(QWidget):
             name_color="#c4b5fd",
             align_right=False,
             tag=f"{self._agent_name.upper()} // NEURAL LINK",
+            ts=ts,
         )
 
     def append_system(self, text: str):
         """所有系统/操作通知统一进控制台日志区，不再污染聊天气泡流。"""
         self.append_console_note(text)
 
+    def append_thought(self, text: str, mood: str = ""):
+        """内心 OS：居中的浅色虚线小条，和对话气泡区分开，不打断阅读。
+
+        heart 独处时产生；只读展示，不落库（落库的是真正说出口的话）。
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        prefix = f"（{mood}）" if (mood or "").strip() else ""
+        shown = f"💭 {prefix}{text}"
+        label = QLabel(shown)
+        label.setObjectName("InnerOS")
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignCenter)
+        # QLabel 开了 wordWrap 之后宽度会塌成“最长的词”，必须自己给一个物理宽度：
+        # 短想法按实际文字宽度，长想法封顶 560px
+        try:
+            ideal = label.fontMetrics().horizontalAdvance(shown) + 36
+        except Exception:
+            ideal = 360
+        label.setFixedWidth(max(200, min(560, ideal)))
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(24, 1, 24, 1)
+        h.addStretch(1)
+        h.addWidget(label)
+        h.addStretch(1)
+        self.bubble_layout.insertWidget(self.bubble_layout.count() - 1, row)
+        QTimer.singleShot(0, self._scroll_chat_to_bottom)
+
     def _append_bubble(self, text: str, who: str, avatar: str, name_color: str,
                        align_right: bool, tag: str = "",
-                       image_paths: list[str] | None = None):
+                       image_paths: list[str] | None = None,
+                       ts: float | None = None):
         text = (text or "").strip()
         if not text and not image_paths:
             return
         bubble = MessageBubble(
             text, who, avatar, name_color, align_right, tag=tag,
             font_size=max(12, self._chat_font_size),
-            image_paths=image_paths)
+            image_paths=image_paths, ts=ts)
         self.bubble_layout.insertWidget(self.bubble_layout.count() - 1, bubble)
         # 布局需要两轮事件循环才会更新 scrollbar range，两个延迟都滚一次
         QTimer.singleShot(0, self._scroll_chat_to_bottom)

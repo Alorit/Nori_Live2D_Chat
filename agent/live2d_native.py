@@ -37,10 +37,21 @@ class Live2DNativeClient:
             (m.get("native_dotnet_path") if m else "") or DEFAULT_DOTNET_PATH
         )
         self._proc: subprocess.Popen | None = None
+        self._log_file = None
         self._models = [
             {"path": "arg-nori", "name": "arg-nori"},
             {"path": "nori", "name": "nori"},
         ]
+
+    # ------------------------------------------------------------------
+    def _open_pet_log(self):
+        """桌宠进程的 stdout/stderr 落到 data/logs/live2d_native.log。"""
+        try:
+            log_dir = PROJECT_ROOT / "data" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            return open(log_dir / "live2d_native.log", "ab")
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     def _request(self, method: str, path: str, payload: dict | None = None,
@@ -78,10 +89,18 @@ class Live2DNativeClient:
                 cmd = [self.dotnet_path, self.app_path, "--pet-only"]
             else:
                 cmd = [self.app_path, "--pet-only"]
+            # 桌宠是独立进程，之前的 Popen 没有接 stdout/stderr：
+            # 启动失败或崩溃时 Python 侧什么都看不到，控制台「live2d」来源也永远是空的。
+            self._log_file = self._open_pet_log()
+            popen_kwargs: dict[str, Any] = {}
+            if self._log_file is not None:
+                popen_kwargs["stdout"] = self._log_file
+                popen_kwargs["stderr"] = subprocess.STDOUT
             self._proc = subprocess.Popen(
                 cmd,
                 cwd=str(Path(self.app_path).parent),
                 creationflags=creationflags,
+                **popen_kwargs,
             )
         except Exception as e:
             logger.warning("启动原生 Live2D 应用失败：%s", e)
@@ -197,4 +216,10 @@ class Live2DNativeClient:
             except Exception as e:
                 logger.warning("关闭原生 Live2D 进程失败：%s", e)
         self._proc = None
+        if self._log_file is not None:
+            try:
+                self._log_file.close()
+            except Exception:
+                pass
+            self._log_file = None
         return not self.available(timeout=0.5)

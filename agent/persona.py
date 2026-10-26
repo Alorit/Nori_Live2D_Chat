@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -17,6 +18,13 @@ logger = logging.getLogger("agent.persona")
 DEFAULT_PERSONA_NAME = "nori"
 PERSONA_DIR = "persona"
 ACTIVE_STATE_FILE = "data/persona_active.json"
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """先写同目录临时文件再 os.replace，避免写到一半被打断留下半截文件。"""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _safe_name(name: str) -> str:
@@ -64,7 +72,7 @@ def ensure_default_persona(cfg) -> str:
     if not path.exists() or not path.read_text(encoding="utf-8").strip():
         default = default_persona_text(cfg)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(default + "\n", encoding="utf-8")
+        _write_atomic(path, default + "\n")
     return DEFAULT_PERSONA_NAME
 
 
@@ -113,8 +121,7 @@ def set_active_persona(cfg, name: str) -> str:
         raise ValueError(f"人格不存在：{name}")
     path = active_state_path(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"active_persona": name}, ensure_ascii=False, indent=2),
-                    encoding="utf-8")
+    _write_atomic(path, json.dumps({"active_persona": name}, ensure_ascii=False, indent=2))
     return name
 
 
@@ -144,7 +151,7 @@ def save_persona_text(cfg, text: str, name: str | None = None) -> tuple[str, str
     name = _safe_name(name) if name else active_persona_name(cfg)
     path = persona_file_for(cfg, name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text + "\n", encoding="utf-8")
+    _write_atomic(path, text + "\n")
     return name, str(path)
 
 
@@ -164,7 +171,7 @@ def reset_persona_to_default(cfg, name: str | None = None) -> str:
     name = _safe_name(name) if name else active_persona_name(cfg)
     path = persona_file_for(cfg, name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text + "\n", encoding="utf-8")
+    _write_atomic(path, text + "\n")
     return text
 
 
@@ -216,5 +223,5 @@ def load_persona_meta(cfg, name: str) -> dict:
 def save_persona_meta(cfg, name: str, meta: dict) -> str:
     path = persona_meta_path(cfg, name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_atomic(path, json.dumps(meta, ensure_ascii=False, indent=2))
     return str(path)
