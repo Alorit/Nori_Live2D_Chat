@@ -1,6 +1,6 @@
 # Nori Live2D Agent
 
-Nori 本地 AI 桌面宠物（灰发猫娘）：
+Nori 本地 AI 桌面宠物：
 **DeepSeek 大模型 + Live2D 形象 + 本地 TTS 语音 + 文字对话框 + 长期记忆与持续学习闭环 + 视觉理解 + 联网搜索 + 时间感知**。
 
 项目目录：`D:\Nori_Live2D_Chat`
@@ -167,10 +167,9 @@ python main.py
   - 配置：`config.yaml` 的 `search` 段
   - 实现：`agent/search.py`（官方 AI Search MCP SSE 端点，工具 `AIsearch`）
 
-## 视觉 MCP（独立版，不泄露 API Key）
+## 视觉 MCP
 
 - 视觉能力已从主项目分离为独立 MCP 服务器：`vision_mcp/`
-- 主项目 `config.yaml` **不再保存视觉 API Key**，分发时不会泄露
 - 模型：`doubao-seed-2-1-pro-260628`（火山方舟 Ark，OpenAI 兼容）
 - 工具：`analyze_image` / `describe_image`
 - 配置方式（任选）：
